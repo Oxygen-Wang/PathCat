@@ -48,9 +48,10 @@ class Explorer:
         self._skills_after = None
         self._skills_expanded = bool(settings.get('skills_expanded', False))
 
-        self._press = None
         self._press_iid = None
-        self._drag_started = False
+        self._drag_items = None
+        self._drag_text = None
+        self._drag_active = False
         self._watch_after = None
         self._chip_ref = None
         self._chip_press_xy = None
@@ -152,7 +153,6 @@ class Explorer:
         tree.bind('<Double-1>', self.on_double)
         tree.bind('<Button-3>', self.context_menu)
         tree.bind('<ButtonPress-1>', self.drag_start)
-        tree.bind('<B1-Motion>', self.drag_motion)
         tree.bind('<ButtonRelease-1>', self.drag_end)
         tree.bind('<<TreeviewOpen>>', self.on_open)
         tree.bind('<Control-c>', lambda e: self.copy_selection())
@@ -604,29 +604,23 @@ class Explorer:
 
     def _chip_press(self, ev, skill):
         self._chip_ref = skill
-        self._chip_press_xy = (ev.x_root, ev.y_root)
-        self._chip_started = False
+        self._drag_items = [Path(skill['path'])] if skill.get('path') else None
+        self._drag_text = None
+        self._drag_active = bool(self._drag_items)
+        if self._drag_active:
+            self._start_watch()
 
     def _chip_motion(self, ev):
-        if self._chip_started or not self._chip_ref or not self._chip_press_xy:
-            return
-        if abs(ev.x_root - self._chip_press_xy[0]) + abs(ev.y_root - self._chip_press_xy[1]) < 8:
-            return
-        self._chip_started = True
-        skill = self._chip_ref
-        self.copy_text('@' + skill['id'])
-        self._bump_skill(skill['id'])
-        if skill.get('path'):
-            start_ole_drag(paths=[str(skill['path'])])   # drag a real file, like folders
-        else:
-            start_ole_drag(text='@' + skill['id'])
-        self._build_skills()
+        pass
 
     def _chip_release(self, ev):
-        skill, started = self._chip_ref, self._chip_started
+        skill = self._chip_ref
+        started = not self._drag_active
         self._chip_ref = None
-        self._chip_press_xy = None
-        self._chip_started = False
+        self._cancel_watch()
+        self._drag_items = None
+        self._drag_text = None
+        self._drag_active = False
         if skill and not started:
             self.copy_text('@' + skill['id'])
             self._bump_skill(skill['id'])
@@ -929,86 +923,106 @@ class Explorer:
                              command=lambda: self._open_external(path if path.is_dir() else path.parent))
         menu.tk_popup(ev.x_root, ev.y_root)
 
-    # --- dragging (one OLE drag handles internal + external drops) --------
+    # --- dragging (poll-based; DoDragDrop runs outside Tk events) ----------
+    def _start_watch(self):
+        self._cancel_watch()
+        try:
+            self._watch_after = self.tree.after(15, self._watch_external_drag)
+        except tk.TclError:
+            self._watch_after = None
+
+    def _cancel_watch(self):
+        if self._watch_after:
+            try:
+                self.tree.after_cancel(self._watch_after)
+            except tk.TclError:
+                pass
+            self._watch_after = None
+
     def drag_start(self, ev):
         iid = self.tree.identify_row(ev.y)
         if iid and iid.endswith(config.PLACEHOLDER):
             iid = None
         if iid and iid not in self.tree.selection():
             self.tree.selection_set(iid)
-        self._press = (ev.x_root, ev.y_root)
         self._press_iid = iid
-        self._drag_started = False
-        # Start a native drag either on motion (below) or when the pointer
-        # leaves the panel (polling), so fast drag-outs work too.
-        if self.selected_paths() or self.refs.get(iid):
-            try:
-                self._watch_after = self.tree.after(15, self._watch_external_drag)
-            except tk.TclError:
-                self._watch_after = None
-
-    def drag_motion(self, ev):
-        if self._drag_started or not self._press:
-            return
-        if abs(ev.x_root - self._press[0]) + abs(ev.y_root - self._press[1]) < 8:
-            return
-        self._begin_drag()
-
-    def _begin_drag(self):
-        if self._drag_started or not self._press:
-            return
-        self._drag_started = True
-        if self._watch_after:
-            try:
-                self.tree.after_cancel(self._watch_after)
-            except tk.TclError:
-                pass
-            self._watch_after = None
-        for widget in (self.tree, self.panel):
-            try:
-                widget.grab_release()
-            except tk.TclError:
-                pass
-        items = self.selected_paths()
-        if items:
-            start_ole_drag(paths=[str(p) for p in items])
-            return
-        ref = self.refs.get(getattr(self, '_press_iid', None))
-        if ref and ref.get('text'):
-            self.copy_text(ref['text'])
-            start_ole_drag(text=ref['text'])
+        self._drag_items = self.selected_paths() or None
+        self._drag_text = None
+        if not self._drag_items:
+            ref = self.refs.get(iid)
+            if ref and ref.get('text'):
+                self._drag_text = ref['text']
+        self._drag_active = bool(self._drag_items or self._drag_text)
+        if self._drag_active:
+            self._start_watch()
 
     def _watch_external_drag(self):
+        """Poll the cursor; start a native drag once it leaves the panel.
+
+        DoDragDrop is blocking and must not be called from inside a Tk mouse
+        event (Tk holds the pointer grab then, which deadlocks the drag loop),
+        so it is started here, from an ``after`` callback.
+        """
         self._watch_after = None
-        if self._drag_started or not self._press:
+        if not self._drag_active:
             return
         if not left_button_down():
+            self._drag_active = False
             return
         x, y = get_cursor_pos()
         px, py = self.panel.winfo_rootx(), self.panel.winfo_rooty()
         pw, ph = self.panel.winfo_width(), self.panel.winfo_height()
         if not (px <= x <= px + pw and py <= y <= py + ph):
-            self._begin_drag()
+            items, text = self._drag_items, self._drag_text
+            self._drag_active = False
+            self._drag_items = None
+            self._drag_text = None
+            for widget in (self.tree, self.panel):
+                try:
+                    widget.grab_release()
+                except tk.TclError:
+                    pass
+            if items:
+                start_ole_drag(paths=[str(p) for p in items])
+            elif text:
+                start_ole_drag(text=text)
             return
-        try:
-            self._watch_after = self.tree.after(15, self._watch_external_drag)
-        except tk.TclError:
-            self._watch_after = None
+        self._watch_after = self.tree.after(15, self._watch_external_drag)
 
     def drag_end(self, ev):
-        if self._watch_after:
-            try:
-                self.tree.after_cancel(self._watch_after)
-            except tk.TclError:
-                pass
-            self._watch_after = None
-        if not self._drag_started:
-            ref = self.refs.get(getattr(self, '_press_iid', None))
+        self._cancel_watch()
+        items = self._drag_items
+        started = not self._drag_active      # the watchdog handed off to OLE
+        self._drag_items = None
+        self._drag_text = None
+        self._drag_active = False
+        iid = getattr(self, '_press_iid', None)
+        self._press_iid = None
+        if started:
+            return
+        if not items:
+            ref = self.refs.get(iid)
             if ref and ref['kind'] == 'mcp':
                 self.copy_text(ref['text'])
-        self._press = None
-        self._press_iid = None
-        self._drag_started = False
+            return
+        target = self.tree.identify_row(ev.y)
+        dst = self.path_of(target)
+        if dst is None or not dst.is_dir() or not self.inside(dst):
+            return
+        copy = bool(ev.state & 0x0004)
+        for src in items:
+            if not src.exists() or not self.inside(src):
+                continue
+            if src == dst or src in dst.parents or src.parent == dst:
+                continue
+            try:
+                if copy:
+                    self._copy_path(src, dst)
+                else:
+                    self._move_path(src, dst)
+            except OSError as exc:
+                messagebox.showerror(t('err_operation'), str(exc), parent=self.panel)
+        self.rebuild(preserve=True)
 
     def _on_panel_drop(self, paths, copy, point):
         try:

@@ -442,6 +442,14 @@ if IS_WIN:
         """
         global last_drag_error, last_drag_effect
         paths = [Path(p) for p in (paths or []) if Path(p).exists()]
+        import os as _os
+        _log = _os.environ.get('QP_DRAG_LOG')
+        if _log:
+            try:
+                with open(_log, 'a', encoding='utf-8') as f:
+                    f.write('start paths=%r text=%r\n' % (paths, text))
+            except Exception:
+                pass
         try:
             _ensure_ole()
             releaser = None
@@ -462,6 +470,12 @@ if IS_WIN:
             hr = _ole32.DoDragDrop(ptr, ctypes.cast(ctypes.byref(src), ctypes.c_void_p),
                                    DROPEFFECT_COPY, ctypes.byref(effect))
             last_drag_effect = (hr, effect.value)
+            if _log:
+                try:
+                    with open(_log, 'a', encoding='utf-8') as f:
+                        f.write('end effect=%r err=%r\n' % (last_drag_effect, last_drag_error))
+                except Exception:
+                    pass
             if releaser:
                 releaser()
         except Exception as exc:  # keep the UI alive but make failures visible
