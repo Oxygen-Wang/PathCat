@@ -1,0 +1,16 @@
+# Byte-compiled / cache
+__pycache__/
+*.py[cod]
+*$py.class
+
+# App data
+.quietpet_trash/
+
+# Build
+build/
+dist/
+*.spec
+
+# Portable git / archives downloaded locally
+MinGit*/
+*.zip
