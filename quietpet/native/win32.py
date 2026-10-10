@@ -12,6 +12,42 @@ from pathlib import Path
 
 from ..core.config import IS_WIN
 
+def foreground_process_id():
+    """Identify the active application, including our own dialogs and menus."""
+    if not IS_WIN:
+        return None
+    from ctypes import wintypes
+    user32 = ctypes.windll.user32
+    user32.GetForegroundWindow.argtypes = []
+    user32.GetForegroundWindow.restype = wintypes.HWND
+    user32.GetWindowThreadProcessId.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.DWORD)]
+    user32.GetWindowThreadProcessId.restype = wintypes.DWORD
+    hwnd = user32.GetForegroundWindow()
+    if not hwnd:
+        return None
+    pid = wintypes.DWORD()
+    user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+    return pid.value or None
+
+
+def make_drag_overlay_clickthrough(hwnd):
+    """Keep the decorative drag window out of mouse hit tests and focus."""
+    if not IS_WIN:
+        return
+    user32 = ctypes.windll.user32
+    from ctypes import wintypes
+    user32.GetAncestor.argtypes = [wintypes.HWND, wintypes.UINT]
+    user32.GetAncestor.restype = wintypes.HWND
+    top = user32.GetAncestor(hwnd, 2) or hwnd
+    get_style = user32.GetWindowLongPtrW if ctypes.sizeof(ctypes.c_void_p) == 8 else user32.GetWindowLongW
+    set_style = user32.SetWindowLongPtrW if ctypes.sizeof(ctypes.c_void_p) == 8 else user32.SetWindowLongW
+    get_style.argtypes = [wintypes.HWND, ctypes.c_int]
+    get_style.restype = ctypes.c_ssize_t
+    set_style.argtypes = [wintypes.HWND, ctypes.c_int, ctypes.c_ssize_t]
+    set_style.restype = ctypes.c_ssize_t
+    # WS_EX_LAYERED | WS_EX_TRANSPARENT | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW
+    set_style(top, -20, get_style(top, -20) | 0x80000 | 0x20 | 0x08000000 | 0x80)
+
 if IS_WIN:
     from ctypes import wintypes
 
@@ -53,36 +89,12 @@ if IS_WIN:
             pass
 
     class DropTarget:
-        """Let a Tk widget accept files/folders dropped from Windows Explorer."""
-
-        WM_DROPFILES = 0x0233
-        GWLP_WNDPROC = -4
+        """Use OLE without replacing Tk's window procedure."""
 
         def __init__(self, hwnd, on_drop):
             self.hwnd = int(hwnd)
-            self.on_drop = on_drop
-            self._proc = WNDPROC(self._handle)
-            self._old = _user32.SetWindowLongPtrW(self.hwnd, self.GWLP_WNDPROC, self._proc)
-            _shell32.DragAcceptFiles(self.hwnd, True)
-
-        def _handle(self, hwnd, msg, wparam, lparam):
-            if msg == self.WM_DROPFILES:
-                paths = []
-                try:
-                    count = _shell32.DragQueryFileW(wparam, 0xFFFFFFFF, None, 0)
-                    for i in range(count):
-                        length = _shell32.DragQueryFileW(wparam, i, None, 0)
-                        buf = ctypes.create_unicode_buffer(length + 1)
-                        _shell32.DragQueryFileW(wparam, i, buf, length + 1)
-                        if buf.value:
-                            paths.append(buf.value)
-                    _shell32.DragFinish(wparam)
-                    if paths:
-                        self.on_drop(paths)
-                except Exception:
-                    pass
-                return 0
-            return _user32.CallWindowProcW(self._old, hwnd, msg, wparam, lparam)
+            if not register_drop_target(self.hwnd, lambda paths, copy, point: on_drop(paths)):
+                raise OSError('Could not register file drop target')
 
     # --- cursor helpers ----------------------------------------------------
     class _POINT(ctypes.Structure):
@@ -153,7 +165,7 @@ if IS_WIN:
 
     _drop_source_ref = None
 
-    def _make_drop_source():
+    def _make_drop_source(on_drag=None):
         global _drop_source_ref
 
         def qi(this, riid, ppv):
@@ -170,6 +182,11 @@ if IS_WIN:
                 return DRAGDROP_S_CANCEL
             if not (keystate & MK_LBUTTON):
                 return DRAGDROP_S_DROP
+            if on_drag:
+                try:
+                    on_drag(get_cursor_pos())
+                except Exception:
+                    pass
             return S_OK
 
         def give_feedback(this, effect):
@@ -436,7 +453,7 @@ if IS_WIN:
                                   ctypes.POINTER(wintypes.DWORD)]
     _ole32.DoDragDrop.restype = HRESULT
 
-    def start_ole_drag(paths=None, text=None, text_file=None):
+    def start_ole_drag(paths=None, text=None, text_file=None, on_drag=None):
         """Start a native drag.
 
         paths     -> real files/folders via the shell (CF_HDROP)
@@ -468,7 +485,7 @@ if IS_WIN:
                 ptr = ctypes.cast(ctypes.byref(obj), ctypes.c_void_p)
             else:
                 return
-            src = _make_drop_source()
+            src = _make_drop_source(on_drag=on_drag)
             effect = wintypes.DWORD(DROPEFFECT_COPY)
             hr = _ole32.DoDragDrop(ptr, ctypes.cast(ctypes.byref(src), ctypes.c_void_p),
                                    DROPEFFECT_COPY, ctypes.byref(effect))
@@ -515,19 +532,23 @@ if IS_WIN:
         _fields_ = [('x', ctypes.c_long), ('y', ctypes.c_long)]
 
     _DT_EFFECT_FN = ctypes.WINFUNCTYPE(HRESULT, ctypes.c_void_p, ctypes.c_void_p, wintypes.DWORD,
-                                       ctypes.POINTER(POINTL), ctypes.POINTER(wintypes.DWORD))
+                                       POINTL, ctypes.POINTER(wintypes.DWORD))
+    _DT_OVER_FN = ctypes.WINFUNCTYPE(HRESULT, ctypes.c_void_p, wintypes.DWORD,
+                                     POINTL, ctypes.POINTER(wintypes.DWORD))
     _DT_LEAVE_FN = ctypes.WINFUNCTYPE(HRESULT, ctypes.c_void_p)
 
     class IDropTargetVtbl(ctypes.Structure):
         _fields_ = [('QueryInterface', _QI_FN), ('AddRef', _REF_FN), ('Release', _REF_FN),
-                    ('DragEnter', _DT_EFFECT_FN), ('DragOver', _DT_EFFECT_FN),
+                    ('DragEnter', _DT_EFFECT_FN), ('DragOver', _DT_OVER_FN),
                     ('DragLeave', _DT_LEAVE_FN), ('Drop', _DT_EFFECT_FN)]
 
     class DropTargetObj(ctypes.Structure):
         _fields_ = [('lpVtbl', ctypes.POINTER(IDropTargetVtbl)), ('ref', ctypes.c_ulong)]
 
-    _target_ref = None
+    _target_refs = {}
     _target_cb = None
+    _target_drag_cb = None
+    _target_drag_files = False
     _target_point = (0, 0)
 
     def _read_hdrop(pdata):
@@ -562,26 +583,39 @@ if IS_WIN:
         return 1
 
     def _t_enter(this, pdata, keystate, pt, peffect):
-        global _target_point
-        _target_point = (pt[0].x, pt[0].y)
+        global _target_point, _target_drag_files
+        _target_point = (pt.x, pt.y)
+        _target_drag_files = bool(_read_hdrop(pdata))
+        _notify_target_drag(_target_point if _target_drag_files else None)
         peffect[0] = DROPEFFECT_COPY
         return S_OK
 
-    def _t_over(this, pdata, keystate, pt, peffect):
+    def _t_over(this, keystate, pt, peffect):
         global _target_point
-        _target_point = (pt[0].x, pt[0].y)
+        _target_point = (pt.x, pt.y)
+        if _target_drag_files:
+            _notify_target_drag(_target_point)
         peffect[0] = DROPEFFECT_COPY
         return S_OK
 
     def _t_leave(this):
+        _notify_target_drag(None)
         return S_OK
 
+    def _notify_target_drag(point):
+        if _target_drag_cb:
+            try:
+                _target_drag_cb(point)
+            except Exception:
+                pass
+
     def _t_drop(this, pdata, keystate, pt, peffect):
+        _notify_target_drag(None)
         paths = _read_hdrop(pdata)
         copy = bool(keystate & MK_CONTROL)
         if _target_cb and paths:
             try:
-                _target_cb(paths, copy, _target_point)
+                _target_cb(paths, copy, (pt.x, pt.y))
             except Exception:
                 pass
         peffect[0] = DROPEFFECT_COPY if copy else DROPEFFECT_MOVE
@@ -590,22 +624,68 @@ if IS_WIN:
     def revoke_drop_target(hwnd):
         try:
             _ole32.RevokeDragDrop(int(hwnd))
+            _target_refs.pop(int(hwnd), None)
         except Exception:
             pass
 
-    def register_drop_target(hwnd, callback):
-        """Register an OLE IDropTarget on a Tk widget so it accepts drags."""
-        global _target_ref, _target_cb
+    def register_drop_target(hwnd, callback, on_drag=None):
+        """Keep each window's callbacks and COM object alive independently."""
         try:
             _ensure_ole()
-            _target_cb = callback
+            has_files = False
+
+            def notify(point):
+                if on_drag:
+                    on_drag(point)
+
+            def enter(this, pdata, keystate, pt, effect):
+                nonlocal has_files
+                has_files = bool(_read_hdrop(pdata))
+                try:
+                    notify((pt.x, pt.y) if has_files else None)
+                except Exception:
+                    pass
+                effect[0] = DROPEFFECT_COPY if has_files else 0
+                return S_OK
+
+            def over(this, keystate, pt, effect):
+                if has_files:
+                    try:
+                        notify((pt.x, pt.y))
+                    except Exception:
+                        pass
+                effect[0] = DROPEFFECT_COPY if has_files else 0
+                return S_OK
+
+            def leave(this):
+                try:
+                    notify(None)
+                except Exception:
+                    pass
+                return S_OK
+
+            def drop(this, pdata, keystate, pt, effect):
+                leave(this)
+                paths = _read_hdrop(pdata)
+                copy = bool(keystate & MK_CONTROL)
+                if paths:
+                    try:
+                        callback(paths, copy, (pt.x, pt.y))
+                    except Exception:
+                        effect[0] = 0
+                        return S_OK
+                effect[0] = DROPEFFECT_COPY if paths else 0
+                return S_OK
+
             vtbl = IDropTargetVtbl(_QI_FN(_t_qi), _REF_FN(_t_addref), _REF_FN(_t_release),
-                                   _DT_EFFECT_FN(_t_enter), _DT_EFFECT_FN(_t_over),
-                                   _DT_LEAVE_FN(_t_leave), _DT_EFFECT_FN(_t_drop))
+                                   _DT_EFFECT_FN(enter), _DT_OVER_FN(over),
+                                   _DT_LEAVE_FN(leave), _DT_EFFECT_FN(drop))
             obj = DropTargetObj(ctypes.pointer(vtbl), 1)
-            _target_ref = (vtbl, obj)
             hr = _ole32.RegisterDragDrop(int(hwnd), ctypes.cast(ctypes.byref(obj), ctypes.c_void_p))
-            return hr == 0
+            if hr == 0:
+                _target_refs[int(hwnd)] = (vtbl, obj)
+                return True
+            return False
         except Exception:
             return False
 
@@ -621,7 +701,7 @@ else:  # pragma: no cover - non-Windows fallback
     def _ensure_ole():
         pass
 
-    def start_ole_drag(paths=None, text=None):
+    def start_ole_drag(paths=None, text=None, text_file=None, on_drag=None):
         pass
 
     def get_cursor_pos():
@@ -633,5 +713,5 @@ else:  # pragma: no cover - non-Windows fallback
     def install_drop_targets(widget, callback, sink):
         pass
 
-    def register_drop_target(hwnd, callback):
+    def register_drop_target(hwnd, callback, on_drag=None):
         return False

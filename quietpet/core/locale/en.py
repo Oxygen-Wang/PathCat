@@ -1,6 +1,21 @@
 # -*- coding: utf-8 -*-
 """English strings."""
 STRINGS = {
+    'skills': 'Skills',
+    'menu_copy_skill_ref': 'Drag / copy reference  {ref}',
+    'menu_open_skill': 'Open SKILL.md',
+    'menu_copy_skill_id': 'Copy skill ID  {id}',
+    'skill_set_name': 'Set display name…',
+    'skill_name_prompt': 'Display name (Chinese ok):',
+
+    'tip_search': 'Search files · Ctrl+F',
+    'search_clear': 'Clear search',
+    'search_hint': 'Search file and folder names in this folder and subfolders',
+    'search_running': 'Searching…',
+    'search_count': '{count} results',
+    'search_limit': 'Showing first {count} results; refine your search',
+    'search_error': 'Search incomplete; some paths could not be read',
+
     'pet_theme': 'Interface colors',
     'theme_dark': 'Black', 'theme_light': 'White',
     'theme_cream': 'Warm cream', 'theme_sage': 'Soft green', 'theme_slate': 'Slate blue',
@@ -65,6 +80,10 @@ STRINGS = {
     'tutorial_next': 'Next',
     'tutorial_done': 'Finish',
     'pet_quit': 'Quit PathCat',
+    'pet_cat_size': 'Cat size',
+    'pet_cat_skin': 'Cat appearance',
+    'cat_skin_default': 'Default cat',
+    'cat_skin_calico': 'Fluffy calico',
     'lang_zh': '中文',
     'lang_en': 'English',
     'hotkey_title': 'Set shortcut',

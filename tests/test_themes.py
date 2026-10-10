@@ -17,8 +17,17 @@ class ThemeTests(unittest.TestCase):
     def test_existing_shortcut_migrates_only_once(self):
         settings = {'hotkey': 'Alt'}
         initialize_settings(settings)
-        self.assertEqual(settings['hotkey'], 'Ctrl+B')
+        self.assertEqual(settings['hotkey'], 'Shift+Z')
         settings['hotkey'] = 'Ctrl+Alt+Q'
+        initialize_settings(settings)
+        self.assertEqual(settings['hotkey'], 'Ctrl+Alt+Q')
+
+    def test_previous_default_upgrades_but_custom_shortcut_is_preserved(self):
+        for old in ('Ctrl+B', 'ctrl + b', 'Control+B'):
+            settings = {'hotkey': old, 'hotkey_ctrl_b_migrated': True}
+            initialize_settings(settings)
+            self.assertEqual(settings['hotkey'], 'Shift+Z')
+        settings = {'hotkey': 'Ctrl+Alt+Q', 'hotkey_ctrl_b_migrated': True}
         initialize_settings(settings)
         self.assertEqual(settings['hotkey'], 'Ctrl+Alt+Q')
 

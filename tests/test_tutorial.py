@@ -15,12 +15,12 @@ class TutorialTests(unittest.TestCase):
     def tearDown(self):
         config.apply_font_size(10)
 
-    def test_first_launch_and_test_replay(self):
+    def test_no_automatic_tutorial_even_on_first_or_preview_launch(self):
         with patch.object(config, 'TUTORIAL_TEST_MODE', False):
-            self.assertTrue(should_show({}))
+            self.assertFalse(should_show({}))
             self.assertFalse(should_show({'tutorial_complete': True}))
         with patch.object(config, 'TUTORIAL_TEST_MODE', True):
-            self.assertTrue(should_show({'tutorial_complete': True}))
+            self.assertFalse(should_show({'tutorial_complete': True}))
 
     def test_complete_skip_replay_and_screen_edges(self):
         root = tk.Tk()
@@ -32,6 +32,14 @@ class TutorialTests(unittest.TestCase):
             root.update()
             self.assertGreaterEqual(tutorial.window.winfo_x(), 0)
             self.assertGreaterEqual(tutorial.window.winfo_y(), 0)
+            bubble = tutorial.window
+            tutorial.next()
+            root.update()
+            self.assertIs(tutorial.window, bubble)
+            self.assertTrue(root.winfo_viewable())
+            self.assertEqual(root.state(), 'normal')
+            self.assertFalse(root.attributes('-topmost'))
+            self.assertFalse(tutorial.window.attributes('-topmost'))
             for size in (8, 20):
                 config.apply_font_size(size)
                 tutorial.render()
@@ -40,7 +48,7 @@ class TutorialTests(unittest.TestCase):
                                      root.winfo_screenwidth())
                 self.assertLessEqual(tutorial.window.winfo_y() + tutorial.window.winfo_height(),
                                      root.winfo_screenheight())
-            for _ in Tutorial.STEPS:
+            for _ in range(len(Tutorial.STEPS) - tutorial.step):
                 tutorial.next()
             self.assertIsNone(tutorial.window)
             self.assertTrue(settings['tutorial_complete'])

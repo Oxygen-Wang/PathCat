@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """Application wiring: pet window + explorer panel + global summon gesture."""
+import os
 import queue
 import sys
 import tkinter as tk
@@ -27,12 +28,15 @@ class QuietPet:
         self._apply_named_fonts()
 
         self.pet = Pet(self.root, self.settings)
+        for event in ('<Motion>', '<ButtonPress>', '<KeyPress>', '<MouseWheel>'):
+            self.root.bind_all(event, self.pet.note_activity, add='+')
         self.pet.on_click = self.toggle_panel
         self.pet.on_menu = self.pet_menu
         self.pet.on_moved = self.on_pet_moved
         self.pet.on_drag = self.on_pet_drag
         self.pet.on_press = self.on_pet_press
         self.pet.on_drop = self.on_cat_drop
+        self.pet.on_hover = self.on_pet_hover
 
         self.explorer = Explorer(self.root, self.settings, self.pet_pos, self.save)
         from .ui.tutorial import Tutorial, should_show
@@ -45,15 +49,22 @@ class QuietPet:
         self.hotkey_manager = None
         self.hotkey_ok = False
         self._timers = {}
+        self._sidebar_foreground = None
+        from .native.tray import TrayIcon
+        self.tray = TrayIcon(self.root, self.show_from_tray, self.quit,
+                             lambda: (i18n.t('pet_open_panel'), i18n.t('pet_quit')))
 
         self.root.bind('<Escape>', lambda e: self.explorer.hide())
         self.pet.enable_drop()
         self.explorer.on_visibility = self.on_panel_visibility
+        self.explorer.on_resize = self._snap_cat
         self.explorer.on_event = self.pet.play
+        self.explorer.on_file_drag = self.pet.follow_file_drag
         self.start_hotkey()
 
         self._tick('hotkey', 150, self.poll_hotkey)
         self._tick('dock', 700, self.dock_pet)
+        self.root.protocol('WM_DELETE_WINDOW', self.quit)
 
     # --- timers ------------------------------------------------------------
     def _tick(self, key, delay, fn):
@@ -81,7 +92,26 @@ class QuietPet:
                         i18n.t('hotkey_warn_title'), i18n.t('hotkey_warn', name=h)))
         except queue.Empty:
             pass
+        self.pet.check_inactivity()
+        self.check_sidebar_foreground()
         self._tick('hotkey', 150, self.poll_hotkey)
+
+    def check_sidebar_foreground(self):
+        from .native.win32 import foreground_process_id
+        if not self._panel_visible():
+            self._sidebar_foreground = None
+            return
+        pid = foreground_process_id()
+        if not pid:
+            return
+        previous = self._sidebar_foreground
+        self._sidebar_foreground = pid
+        # Hover opens without taking focus. Close only on a later app switch.
+        if previous is not None and pid != previous and pid != os.getpid():
+            if self.pet.drag_start or self.pet._file_drag_alpha is not None or self.explorer._drag_active:
+                self._sidebar_foreground = previous
+                return
+            self.explorer.hide()
 
     # --- helpers -----------------------------------------------------------
     def _log_exception(self, exc, val, tb):
@@ -103,6 +133,15 @@ class QuietPet:
     def toggle_panel(self):
         self.explorer.toggle()
 
+    def show_from_tray(self):
+        self.pet.note_activity()
+        self.pet.follow_file_drag(None)
+        self.root.deiconify()
+        self.explorer.show()
+        self.dock_pet()
+        self.root.lift()
+        self.pet.raise_pet()
+
     def on_cat_drop(self, paths):
         """A folder dropped onto the cat becomes the managed folder."""
         folders = [p for p in paths if Path(p).is_dir()]
@@ -118,6 +157,8 @@ class QuietPet:
 
     def on_panel_visibility(self):
         visible = self._panel_visible()
+        from .native.win32 import foreground_process_id
+        self._sidebar_foreground = foreground_process_id() if visible else None
         self.pet.play('panel_open' if visible else 'panel_close', ms=700)
         self.root.after(30, self.dock_pet)
 
@@ -131,23 +172,41 @@ class QuietPet:
         side = self.settings.get('panel_side', 'right')
         if self._panel_visible():
             pw = self.explorer.panel_width()
-            return (sw - pw) - 80 - 6 if side == 'right' else pw + 6
-        return (sw - 80) if side == 'right' else 0
+            return (sw - pw) - self.pet.window_size[0] - 6 if side == 'right' else pw + 6
+        return (sw - self.pet.window_size[0]) if side == 'right' else 0
 
     def on_pet_press(self):
-        pass
+        self.pet.note_activity()
+
+    def on_pet_hover(self):
+        if self._panel_visible():
+            self.explorer.panel.lift()
+            self.pet.raise_pet()
+        else:
+            self.explorer.show(activate=False)
+
+    def set_cat_skin(self, name):
+        self.pet.set_skin(name)
+        self.save()
+
+    def set_cat_scale(self, scale):
+        self.pet.set_scale(scale)
+        if self._panel_visible():
+            self.explorer.position()
+        self._snap_cat()
+        self.save()
 
     def on_pet_drag(self):
         """Live: dragging the cat resizes the sidebar width and can switch sides."""
         self.root.update_idletasks()
         sw = self.root.winfo_screenwidth()
         cat_x = self.root.winfo_x()
-        side = 'left' if (cat_x + 40) < sw // 2 else 'right'
+        side = 'left' if (cat_x + self.pet.window_size[0] // 2) < sw // 2 else 'right'
         self.settings['panel_side'] = side
         if not self._panel_visible():
             return
-        width = (sw - cat_x - 86) if side == 'right' else (cat_x - 6)
-        width = max(260, min(width, max(260, sw - 80)))
+        width = (sw - cat_x - self.pet.window_size[0] - 6) if side == 'right' else (cat_x - 6)
+        width = max(260, min(width, max(260, sw - self.pet.window_size[0])))
         self.settings['panel_width'] = width
         self.explorer.position()
 
@@ -155,7 +214,7 @@ class QuietPet:
         self.root.update_idletasks()
         sw = self.root.winfo_screenwidth()
         cat_x = self.root.winfo_x()
-        self.settings['panel_side'] = 'left' if (cat_x + 40) < sw // 2 else 'right'
+        self.settings['panel_side'] = 'left' if (cat_x + self.pet.window_size[0] // 2) < sw // 2 else 'right'
         self._snap_cat()
         self.save()
 
@@ -163,8 +222,9 @@ class QuietPet:
         self.root.update_idletasks()
         sw, sh = self.root.winfo_screenwidth(), self.root.winfo_screenheight()
         x = self._cat_x_for_state()
-        y = max(0, min(self.root.winfo_y(), max(0, sh - 98)))
-        self.root.geometry(f'80x98+{x}+{y}')
+        y = max(0, min(self.root.winfo_y(), max(0, sh - self.pet.window_size[1])))
+        w, h = self.pet.window_size
+        self.root.geometry(f'{w}x{h}+{x}+{y}')
         self.settings.update(x=x, y=y)
 
     def dock_pet(self):
@@ -172,17 +232,31 @@ class QuietPet:
         self.root.update_idletasks()
         sw, sh = self.root.winfo_screenwidth(), self.root.winfo_screenheight()
         x = self._cat_x_for_state()
-        y = max(0, (sh - 98) // 2)
-        self.root.geometry(f'80x98+{x}+{y}')
+        y = max(0, (sh - self.pet.window_size[1]) // 2)
+        w, h = self.pet.window_size
+        self.root.geometry(f'{w}x{h}+{x}+{y}')
         self.settings.update(x=x, y=y)
         self.save()
 
     def pet_menu(self, ev):
+        self.pet.note_activity()
         menu = tk.Menu(self.root, tearoff=0)
         menu.add_command(label=i18n.t('pet_open_panel'), command=self.explorer.show)
         menu.add_command(label=i18n.t('pet_change_folder'), command=self.explorer.choose_folder)
         menu.add_command(label=i18n.t('pet_open_explorer'),
                          command=lambda: self.explorer._open_external(self.explorer.folder))
+        skins = tk.Menu(menu, tearoff=0)
+        from .ui.pet import CAT_SKINS
+        for name in CAT_SKINS:
+            label = ('✓ ' if self.pet.skin == name else '') + i18n.t('cat_skin_' + name)
+            skins.add_command(label=label, command=lambda value=name: self.set_cat_skin(value))
+        menu.add_cascade(label=i18n.t('pet_cat_skin'), menu=skins)
+        scales = tk.Menu(menu, tearoff=0)
+        from .ui.pet import CAT_SCALES
+        for scale in CAT_SCALES:
+            label = ('✓ ' if self.pet.scale == scale else '') + f'{scale}%'
+            scales.add_command(label=label, command=lambda value=scale: self.set_cat_scale(value))
+        menu.add_cascade(label=i18n.t('pet_cat_size'), menu=scales)
         menu.add_separator()
         mark = '✓ ' if self.hotkey_ok else '⚠ '
         menu.add_command(label=i18n.t('pet_hotkey', mark=mark, name=self.hotkey_text),
@@ -251,7 +325,10 @@ class QuietPet:
         self.hotkey_manager.start()
 
     def on_hotkey(self):
+        self.pet.note_activity()
+        self.pet.follow_file_drag(None)
         self.root.deiconify()
+        self.root.attributes('-topmost', True)
         self.root.lift()
         self.pet.raise_pet()
         self.explorer.toggle()
@@ -280,6 +357,10 @@ class QuietPet:
     # --- lifecycle ---------------------------------------------------------
 
     def quit(self):
+        self.explorer._cancel_search()
+        self.explorer._cancel_skills_layout()
+        self.explorer._cancel_resize()
+        self.tray.close()
         self.tutorial.close()
         self.settings.update(x=self.root.winfo_x(), y=self.root.winfo_y())
         self.save()
@@ -301,11 +382,22 @@ class QuietPet:
         self.root.destroy()
 
     def run(self):
-        self.root.mainloop()
+        try:
+            self.root.mainloop()
+        finally:
+            self.tray.close()
 
 
 def main():
-    QuietPet().run()
+    from .native.instance import SingleInstance, notify_running
+    instance = SingleInstance()
+    if not instance.acquire():
+        notify_running()
+        return
+    try:
+        QuietPet().run()
+    finally:
+        instance.close()
 
 
 if __name__ == '__main__':

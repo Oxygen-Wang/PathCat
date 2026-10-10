@@ -1,6 +1,21 @@
 # -*- coding: utf-8 -*-
 """Chinese strings."""
 STRINGS = {
+    'skills': '技能',
+    'menu_copy_skill_ref': '拖动 / 复制引用  {ref}',
+    'menu_open_skill': '打开 SKILL.md',
+    'menu_copy_skill_id': '复制技能 ID  {id}',
+    'skill_set_name': '设置显示名…',
+    'skill_name_prompt': '显示名（支持中文）：',
+
+    'tip_search': '搜索文件 · Ctrl+F',
+    'search_clear': '清空搜索',
+    'search_hint': '搜索当前目录及子目录中的文件或文件夹名称',
+    'search_running': '正在搜索…',
+    'search_count': '找到 {count} 项',
+    'search_limit': '显示前 {count} 项，请输入更具体的名称',
+    'search_error': '搜索未完成，部分路径无法读取',
+
     'pet_theme': '界面配色',
     'theme_dark': '黑色', 'theme_light': '白色',
     'theme_cream': '暖米色', 'theme_sage': '柔和绿', 'theme_slate': '灰蓝色',
@@ -65,6 +80,10 @@ STRINGS = {
     'tutorial_next': '下一步',
     'tutorial_done': '完成教学',
     'pet_quit': '退出 PathCat',
+    'pet_cat_size': '小猫大小',
+    'pet_cat_skin': '小猫形象',
+    'cat_skin_default': '默认小猫',
+    'cat_skin_calico': '毛绒三花猫',
     'lang_zh': '中文',
     'lang_en': 'English',
     'hotkey_title': '设置快捷键',

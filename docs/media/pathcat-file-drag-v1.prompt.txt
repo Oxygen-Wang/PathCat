@@ -1,0 +1,5 @@
+Generated with the built-in imagegen tool.
+Reference: docs/media/pathcat-fluffy-mascot-v1.png
+Transparent background: true
+
+Use case: precise-object-edit. Reference image is the exact fluffy PathCat kitten identity. Create a single transparent desktop drag companion sprite of this same charcoal-gray and cream fluffy kitten, matching its brown eyes, peach ears, rounded baby proportions and warm hand-painted detailed fur. Change pose: both front arms raised high above its head, both cream paws visibly supporting the lower corners of one golden yellow file folder held overhead. Folder above ears, face entirely visible below it; cute determined happy expression looking up slightly. Back paws and fluffy curled tail fully visible, compact round body, clear silhouette readable when small. Exactly two raised front paws and two back paws, no extra limbs. Folder plain without text. Full body and folder centered with safe margins, no ground, no cast shadow, no background, true alpha transparency, no text or watermark.

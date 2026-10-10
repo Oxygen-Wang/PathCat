@@ -4,7 +4,7 @@
 
 `VERSION` 是唯一版本来源，应用读取此文件，打包必须包含它。
 格式为 `MAJOR.MINOR.PATCH` 或 `MAJOR.MINOR.PATCH-beta.N`（也允许 alpha、rc）。
-当前版本为 `0.2.0-beta.2`；不把测试版宣传为稳定版。
+当前版本为 `0.2.0-beta.6`；不把测试版宣传为稳定版。
 
 - 修复问题：增加 PATCH。
 - 向后兼容的新功能：增加 MINOR，PATCH 归零。
@@ -23,8 +23,8 @@
 7. 为 **main 上经过测试的提交**建立附注标签：
 
    ```powershell
-   git tag -a v0.2.0-beta.2 -m "PathCat 0.2.0-beta.2"
-   git push origin v0.2.0-beta.2
+   git tag -a v0.2.0-beta.6 -m "PathCat 0.2.0-beta.6"
+   git push origin v0.2.0-beta.6
    ```
 
 8. 标签触发发布流程，重新测试、构建 Windows 包并发布 GitHub Release。
@@ -47,5 +47,4 @@ GitHub `main` 规则要求 PR、最新的 windows-tests 和已解决的评审讨
 Windows 桌面文件侧栏是当前产品。插件原型已从当前源码删除，旧代码只保留
 在 Git 历史中，不纳入桌面构建、不使用其独立旧版本号代表 PathCat 版本。
 
-设置继续读取 QuietPet 的旧目录以保持升级兼容。测试版每次启动教学，
-稳定版本只在未完成教学时自动显示。
+设置继续读取 QuietPet 的旧目录以保持升级兼容。启动时不自动显示教学；从小猫右键菜单手动打开。

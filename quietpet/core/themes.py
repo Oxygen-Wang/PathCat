@@ -15,7 +15,10 @@ def palette(name):
 
 def initialize_settings(settings):
     # One-time migration makes the user's requested shortcut apply to existing installs.
-    if not settings.get('hotkey_ctrl_b_migrated'):
-        settings['hotkey'] = 'Ctrl+B'
-        settings['hotkey_ctrl_b_migrated'] = True
+    if not settings.get('hotkey_shift_z_migrated'):
+        current = (settings.get('hotkey') or '').replace(' ', '').lower()
+        if not settings.get('hotkey_ctrl_b_migrated') or current in ('', 'ctrl+b', 'control+b'):
+            from .config import DEFAULT_HOTKEY
+            settings['hotkey'] = DEFAULT_HOTKEY
+        settings['hotkey_shift_z_migrated'] = True
     return settings
