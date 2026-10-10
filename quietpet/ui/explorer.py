@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""The file explorer sidebar: lazy tree, skill chips, clipboard, drag/copy/move."""
+"""The file sidebar: lazy tree, clipboard and cross-path drag/copy/move."""
 import os
 import time
 import shutil
@@ -12,12 +12,11 @@ from tkinter import ttk, filedialog, simpledialog, messagebox
 from ..core import config
 from ..core.i18n import t
 from .icons import load_icons
-from ..opencode.status import list_open_skills, read_mcp_servers, read_skill_text
 from ..core.util import safe_name, unique_dest
 from ..core.ignore import (project_ignored, read_ignore_lines, write_ignore_lines,
                            transfer_allowed, top_level_paths, escape_pattern)
 from .widgets import ToolTip
-from ..native.win32 import (force_top, get_cursor_pos, install_drop_targets,
+from ..native.win32 import (get_cursor_pos, install_drop_targets,
                             left_button_down, register_drop_target, start_ole_drag)
 from ..native.win32 import revoke_drop_target
 
@@ -38,10 +37,6 @@ class Explorer:
         self.icons = {}
         self.tips = []
         self.drop_targets = []
-        self.refs = {}
-        self.usage = dict(settings.get('skill_usage') or {})
-        self.labels = dict(settings.get('skill_labels') or {})
-        self._body_cache = {}
         self.loaded = set()
         self.clip = None
         self.on_event = lambda name, ms=900: None
@@ -58,12 +53,6 @@ class Explorer:
         self._drag_preview = None
         self.show_ignored = False
 
-        self.skills_area = None
-        self.skills_header = None
-        self._skills = []
-        self._skills_width = 0
-        self._skills_after = None
-        self._skills_expanded = bool(settings.get('skills_expanded', False))
 
         self._press_iid = None
         self._drag_items = None
@@ -115,9 +104,6 @@ class Explorer:
         self._hide_row_tip()
         for tip in self.tips:
             tip._hide()
-        if self._skills_after and self.skills_area:
-            self.skills_area.after_cancel(self._skills_after)
-            self._skills_after = None
         revoke_drop_target(self.panel.winfo_id())
         revoke_drop_target(self.tree.winfo_id())
         self.panel.destroy()
@@ -144,7 +130,7 @@ class Explorer:
         w.title(t('panel_title'))
         w.configure(bg=config.BG)
         w.overrideredirect(True)
-        w.attributes('-topmost', True)
+        w.attributes('-topmost', False)
         w.protocol('WM_DELETE_WINDOW', self.hide)
         self.icons = load_icons(master=self.root, size=16, color=config.FG)
         self.tips = []
@@ -214,17 +200,6 @@ class Explorer:
                           bg=config.BG, fg=config.MUTED, font=config.ui_font(9), anchor='w')
         footer.pack(side='bottom', fill='x', padx=14, pady=10)
 
-        # Skills dock at the bottom and fill from bottom to top.
-        self.skills_area = tk.Frame(self.inner, bg=config.BG)
-        self.skills_area.pack(side='bottom', fill='x', padx=10, pady=(0, 2))
-        self.skills_area.bind('<Configure>', self._on_skills_configure)
-        skills_head = tk.Frame(self.inner, bg=config.BG)
-        skills_head.pack(side='bottom', fill='x', padx=12, pady=(0, 2))
-        self.skills_header = tk.Label(skills_head, text='', bg=config.BG, fg=config.MUTED,
-                                      font=config.ui_font(8, 'bold'), anchor='w', cursor='hand2')
-        self.skills_header.pack(side='left')
-        self.skills_header.bind('<Button-1>', lambda e: self.toggle_skills())
-
         body.pack(fill='both', expand=True, padx=(8, 6))
 
         self.update_labels()
@@ -232,7 +207,7 @@ class Explorer:
         if not register_drop_target(w.winfo_id(), self._on_panel_drop) and \
                 not register_drop_target(tree.winfo_id(), self._on_panel_drop):
             install_drop_targets(w, self.on_os_drop, self.drop_targets)
-        force_top(w.winfo_id())
+        w.lift()
         try:
             w.focus_force()
         except tk.TclError:
@@ -364,19 +339,6 @@ class Explorer:
         self.update_labels()
         self.rebuild(preserve=False)
 
-    def mcp_config_paths(self):
-        paths = [config.OC_CONFIG]
-        try:
-            start = self.folder.resolve()
-            for base in [start] + list(start.parents):
-                for name in ('opencode.json', 'opencode.jsonc',
-                             '.opencode/opencode.json', '.opencode/opencode.jsonc'):
-                    p = base / name
-                    if p.exists() and p not in paths:
-                        paths.append(p)
-        except OSError:
-            pass
-        return paths
 
     def on_os_drop(self, paths):
         self._copy_paths([Path(p) for p in paths], self.target_dir())
@@ -395,8 +357,7 @@ class Explorer:
         return text if len(text) <= limit else text[:limit - 1] + '…'
 
     def path_of(self, iid):
-        if not iid or iid.endswith(config.PLACEHOLDER) or iid.startswith('__') \
-                or iid.startswith(config.MCP_PREFIX):
+        if not iid or iid.endswith(config.PLACEHOLDER):
             return None
         return Path(iid)
 
@@ -451,25 +412,6 @@ class Explorer:
             except tk.TclError:
                 continue
 
-    def _populate_sections(self):
-        config_paths = self.mcp_config_paths()
-        has_icons = bool(self.icons)
-        servers = read_mcp_servers(config_paths)
-        self._insert('', config.SEC_MCP,
-                     ('🔌 ' if not has_icons else '') + f'MCP ({len(servers)})', 'mcp')
-        for server in servers:
-            iid = config.MCP_PREFIX + server['name']
-            label = f"{server['name']}  ·  {server['type']}"
-            if server['detail']:
-                label += f"  ·  {self._short(server['detail'])}"
-            if server['disabled']:
-                label += f"  ({t('disabled')})"
-            self._insert(config.SEC_MCP, iid, ('🔌 ' if not has_icons else '') + label, 'mcp')
-            self.refs[iid] = {'kind': 'mcp', 'text': server['name'], 'name': server['name'],
-                              'path': None, 'type': server['type'], 'detail': server['detail']}
-        if not servers:
-            self._insert(config.SEC_MCP, config.MCP_PREFIX + '::empty', t('mcp_unconfigured'))
-        self.loaded.add(config.SEC_MCP)
 
     def _ensure_loaded(self, iid):
         if iid in self.loaded:
@@ -516,11 +458,9 @@ class Explorer:
         opened = self._opened_paths() if preserve else set()
         selected = self.tree.selection() if preserve else ()
         self.loaded = set()
-        self.refs = {}
         self.tree.delete(*self.tree.get_children())
         self._populate('', self.folder)
         self.loaded.add(str(self.folder))
-        self._populate_sections()
         for path in opened:
             try:
                 if Path(path).is_dir() and self.tree.exists(str(path)):
@@ -532,7 +472,6 @@ class Explorer:
         selected = [iid for iid in selected if self.tree.exists(iid)]
         if selected:
             self.tree.selection_set(selected)
-        self._build_skills()
 
     # --- display filters --------------------------------------------------
     def ignore_patterns(self, filename='.cursorignore'):
@@ -641,142 +580,7 @@ class Explorer:
                 and not iid.endswith(config.PLACEHOLDER) and Path(iid).is_dir():
             self._ensure_loaded(iid)
 
-    # --- skill chips (bottom, most-used first) ----------------------------
-    def _skill_detail(self, skill):
-        used = self.usage.get(skill['id'], 0)
-        head = f"{skill['id']}  ({skill['name']})" + (f"  ·  已用 {used} 次" if used else '')
-        body = ''
-        if skill.get('path'):
-            if skill['id'] not in self._body_cache:
-                self._body_cache[skill['id']] = read_skill_text(skill['path'], limit=500)
-            body = self._body_cache[skill['id']]
-        parts = [head, skill.get('description') or '', body, str(skill.get('path') or '')]
-        return '\n'.join(p for p in parts if p)
 
-    def _on_skills_configure(self, ev):
-        if abs(ev.width - self._skills_width) > 6:
-            self._skills_width = ev.width
-            if self._skills_after:
-                try:
-                    self.skills_area.after_cancel(self._skills_after)
-                except tk.TclError:
-                    pass
-            self._skills_after = self.skills_area.after(60, self._build_skills)
-
-    def _build_skills(self):
-        if not self.skills_area or not self.skills_area.winfo_exists():
-            return
-        for child in self.skills_area.winfo_children():
-            child.destroy()
-        skills = list_open_skills(project_dir=self.folder, config_paths=self.mcp_config_paths())
-        skills.sort(key=lambda s: (-self.usage.get(s['id'], 0), s['id'].casefold()))
-        self._skills = skills
-        if self.skills_header:
-            arrow = '▾' if self._skills_expanded else '▸'
-            self.skills_header.config(text=f"{arrow} {t('skills')} ({len(skills)})")
-        area_w = self.skills_area.winfo_width()
-        if area_w <= 1:
-            area_w = 320
-        row = None
-        x = 0
-        for index, skill in enumerate(skills):
-            text = self.labels.get(skill['id'], skill['name'])
-            width = max(46, len(text) * 8 + 18)
-            if row is None:
-                row = tk.Frame(self.skills_area, bg=config.BG)
-                row.pack(side='bottom', fill='x', anchor='w')
-                x = 0
-            elif self._skills_expanded and x + width > area_w:
-                row = tk.Frame(self.skills_area, bg=config.BG)
-                row.pack(side='bottom', fill='x', anchor='w')
-                x = 0
-            elif not self._skills_expanded and x + width > area_w:
-                break
-            top = index < 5
-            chip = tk.Label(row, text=text, bg=config.SEL if top else config.BTN,
-                            fg=config.SEL_FG if top else config.FG, padx=8, pady=3,
-                            font=config.ui_font(9), cursor='hand2')
-            chip.pack(side='left', padx=2, pady=2)
-            self._bind_chip(chip, skill)
-            x += width
-
-    def toggle_skills(self):
-        self._skills_expanded = not self._skills_expanded
-        self.settings['skills_expanded'] = self._skills_expanded
-        self.save()
-        self._build_skills()
-
-    def _bind_chip(self, chip, skill):
-        chip.bind('<ButtonPress-1>', lambda e, s=skill: self._chip_press(e, s))
-        chip.bind('<B1-Motion>', self._chip_motion)
-        chip.bind('<ButtonRelease-1>', self._chip_release)
-        chip.bind('<Button-3>', lambda e, s=skill: self._chip_menu(e, s))
-        self.tips.append(ToolTip(chip, self._skill_detail(skill)))
-
-    def _chip_press(self, ev, skill):
-        self._press_xy = (ev.x_root, ev.y_root)
-        self._drag_moved = False
-        self._chip_ref = skill
-        self._drag_items = [Path(skill['path'])] if skill.get('path') else None
-        self._drag_text = None
-        self._drag_event = 'skill_drag'
-        self._drag_active = bool(self._drag_items)
-        if self._drag_active:
-            self._start_watch()
-
-    def _chip_motion(self, ev):
-        pass
-
-    def _chip_release(self, ev):
-        skill = self._chip_ref
-        started = not self._drag_active
-        self._chip_ref = None
-        self._cancel_watch()
-        self._drag_items = None
-        self._drag_text = None
-        self._drag_active = False
-        if skill and not started:
-            self.copy_text('@' + skill['id'])
-            self._bump_skill(skill['id'])
-            self.on_event('skill_copy')
-            self._build_skills()
-
-    def _chip_menu(self, ev, skill):
-        menu = tk.Menu(self.panel, tearoff=0)
-        menu.add_command(label=t('menu_copy_skill_ref', ref='@' + skill['id']),
-                         command=lambda s=skill: (self.copy_text('@' + s['id']),
-                                                  self._bump_skill(s['id']),
-                                                  self._build_skills()))
-        menu.add_command(label=t('menu_open_skill'),
-                         command=lambda s=skill: self._open_external(s['path']))
-        menu.add_command(label=t('menu_copy_skill_id', id=skill['id']),
-                         command=lambda s=skill: self.copy_text(s['id']))
-        menu.add_separator()
-        menu.add_command(label=t('skill_set_name'),
-                         command=lambda s=skill: self._set_skill_label(s))
-        menu.tk_popup(ev.x_root, ev.y_root)
-
-    def _set_skill_label(self, skill):
-        current = self.labels.get(skill['id'], skill['name'])
-        name = simpledialog.askstring(t('skill_set_name'), t('skill_name_prompt'),
-                                      initialvalue=current, parent=self.panel)
-        if name is None:
-            return
-        name = name.strip()
-        if name:
-            self.labels[skill['id']] = name
-        else:
-            self.labels.pop(skill['id'], None)
-        self.settings['skill_labels'] = self.labels
-        self.save()
-        self._build_skills()
-
-    def _bump_skill(self, skill_id):
-        if not skill_id:
-            return
-        self.usage[skill_id] = self.usage.get(skill_id, 0) + 1
-        self.settings['skill_usage'] = self.usage
-        self.save()
 
     # --- operations --------------------------------------------------------
     def new_folder(self):
@@ -802,13 +606,6 @@ class Explorer:
             self.activate(item)
 
     def activate(self, item):
-        ref = self.refs.get(item)
-        if ref:
-            if ref['kind'] == 'skill' and ref.get('path'):
-                self._open_external(ref['path'])
-            else:
-                self.copy_text(ref['text'])
-            return
         path = self.path_of(item)
         if path is None:
             if item.startswith('__'):
@@ -958,20 +755,6 @@ class Explorer:
             self._row_after = None
 
     def _row_tip_text(self, iid):
-        ref = self.refs.get(iid)
-        if ref:
-            if ref['kind'] == 'skill':
-                used = self.usage.get(ref['id'], 0)
-                head = f"{ref['id']}  ({ref['name']})" + (f"  ·  已用 {used} 次" if used else '')
-                body = ''
-                if ref.get('path'):
-                    if ref['id'] not in self._body_cache:
-                        self._body_cache[ref['id']] = read_skill_text(ref['path'], limit=500)
-                    body = self._body_cache[ref['id']]
-                parts = [head, ref.get('description') or '', body, str(ref.get('path') or '')]
-            else:
-                parts = [ref.get('name', ''), ref.get('type') or '', ref.get('detail') or '']
-            return '\n'.join(p for p in parts if p)
         path = self.path_of(iid)
         return str(path) if path is not None else ''
 
@@ -984,7 +767,7 @@ class Explorer:
         tip = tk.Toplevel(self.tree)
         tip.wm_overrideredirect(True)
         try:
-            tip.attributes('-topmost', True)
+            tip.attributes('-topmost', False)
         except tk.TclError:
             pass
         tk.Label(tip, text=text, bg=config.BTN, fg=config.FG, font=config.ui_font(9),
@@ -1026,20 +809,6 @@ class Explorer:
         state = 'normal' if self.clip else 'disabled'
         menu.add_command(label=t('menu_paste'), command=self.paste, state=state)
         path = self.path_of(iid) if iid else None
-        ref = self.refs.get(iid) if iid else None
-        if ref:
-            menu.add_separator()
-            if ref['kind'] == 'skill':
-                menu.add_command(label=t('menu_copy_skill_ref', ref=ref['text']),
-                                 command=lambda r=ref: (self._bump_skill(r['id']),
-                                                        self.copy_text(r['text'])))
-                menu.add_command(label=t('menu_open_skill'),
-                                 command=lambda: self._open_external(ref['path']))
-            else:
-                menu.add_command(label=t('menu_copy_mcp_name', name=ref['name']),
-                                 command=lambda: self.copy_text(ref['text']))
-                menu.add_command(label=t('menu_copy_mcp_prefix', name=ref['name']),
-                                 command=lambda: self.copy_text(f"tools.{ref['name']}."))
         if path:
             menu.add_separator()
             menu.add_command(label=t('menu_open'), command=lambda: self.activate(iid))
@@ -1125,7 +894,7 @@ class Explorer:
         if self._drag_preview is None:
             tip = self._drag_preview = tk.Toplevel(self.panel)
             tip.overrideredirect(True)
-            tip.attributes('-topmost', True)
+            tip.attributes('-topmost', False)
             label = tk.Label(tip, bg=config.BTN, fg=config.FG, padx=8, pady=5,
                              font=config.ui_font(9), justify='left')
             label.pack()
@@ -1176,10 +945,6 @@ class Explorer:
         self._drag_items = top_level_paths(self.selected_paths()) if iid else None
         self._drag_text = None
         self._drag_event = None
-        if not self._drag_items:
-            ref = self.refs.get(iid)
-            if ref and ref.get('text'):
-                self._drag_text = ref['text']
         self._drag_active = bool(self._drag_items or self._drag_text)
         if self._drag_active:
             self._start_watch()
@@ -1271,10 +1036,6 @@ class Explorer:
         if started:
             return
         if not items:
-            ref = self.refs.get(iid)
-            if ref and ref['kind'] == 'mcp':
-                self.copy_text(ref['text'])
-                self.on_event('mcp')
             return
         if not moved:
             return

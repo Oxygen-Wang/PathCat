@@ -1,120 +1,13 @@
-旧版 QuietPet 文档（保留历史记录）。当前名称、运行方式和版本规则请阅读 README.md。
-下面插件与旧 EXE 说明不作为当前 PathCat 的发行说明。
+径猫 · PathCat
 
-QuietPet | Windows 本地静默桌宠 + 文件夹管理器（右侧侧边栏）
+完整的中英文说明、版本号和功能介绍见 README.md。
+版本管理流程见 VERSIONING.md，变更记录见 CHANGELOG.md。
 
-Codex 本地插件：见 plugins/quietpet-codex/README.md。
-生成插件包：python tools/package_codex_plugin.py
-Codex MCP 入口：python codex_mcp_entry.py
-支持侧边栏控制、受目录范围限制的文件读取、Codex 技能发现和主动任务状态报告。
-
-文件树新增：拖动目标高亮、悬停文件夹 0.65 秒展开、拖到上下边缘自动滚动。
-面板内拖到文件夹 = 移动；按 Ctrl 拖动 = 复制；拖到空白处 = 当前项目根目录。
-跨路径拖动：拖到顶部另一条路径标签即可移动；悬停 0.45 秒自动切换目录，可继续拖入子文件夹。
-拖动浮层显示移动/复制及目标路径；放下后选中目标文件；Esc 可取消，工具栏空白不会触发移动。
-右键条目“忽略选中项（不显示）”；工具栏 ⚙ 或右键“忽略显示规则…”可编辑。
-自动读取项目及子目录的 .gitignore 和 .cursorignore，支持 *.log、** 和 ! 例外。
-右键忽略追加到根目录 .cursorignore；规则编辑器可选择修改 .gitignore 或 .cursorignore。
-右键“临时显示忽略项”可查看隐藏内容，删除相应规则并保存可恢复显示。
-忽略显示不删除文件、不限制 MCP 读取；编辑 .gitignore 同时影响 Git。
-
-运行：安装 Python 3（含 tkinter），双击“启动QuietPet.bat”。
-      也可命令行：python QuietPet.py  或  python -m quietpet
-
-呼出：默认“Ctrl+B”打开/收起侧边栏；旧设置首次升级也改为 Ctrl+B，之后手动选择的快捷键会保留。
-      右键猫咪可改为连按手势（Alt/Shift/Ctrl/Win）
-      或组合键（Ctrl+Alt+Q…）。
-猫咪：贴在侧边栏内侧边缘、竖直居中。
-      · 左右拖动 = 动态调整侧边栏宽度（拉宽/拉窄）；
-      · 拖到屏幕另一半 = 换到左边/右边停靠；
-      · 单击 = 开合侧边栏；右键 = 菜单（换文件夹/语言/快捷键/退出）。
-      宽度、方向、位置都会保存。
-
-侧边栏：停靠屏幕左或右、整屏高度；默认宽度 340（最小 260，可拖动猫咪调整）。
-      顶部是路径标签栏（可放多个文件夹：切换 / × 移除 / ＋添加；把文件夹拖到猫咪上也可添加）。
-      工具栏：打开文件夹 / 新建文件夹 / 新建文件 / 刷新 / 展开折叠切换（⊞↔⊟）。
-      鼠标停在图标或条目上会显示提示。
-技能(🧩)：在侧边栏**底部、从下往上**排列；默认收成一条长条（点 ▸/▾ 展开成多行）。
-        最常用的前 5 个高亮排在最前（按钮上按“使用次数”排序，次数会保存）。
-        右键 → “设置显示名…” 可给技能起中文名。
-        停顿显示详情（id/名称/次数 + 说明 + SKILL.md 内容）。
-        单击或拖出 = 文本 @技能ID（同时进剪贴板，可 Ctrl+V）；右键打开 SKILL.md。
-MCP(🔌)：读取 opencode V2 的 mcp.servers，显示 名称 · 类型 · url/command ·(已禁用)。
-文件操作（标准文件夹交互）：
-      · 拖入：从资源管理器拖文件/文件夹到侧边栏 → 复制到当前文件夹。
-      · 互拖：面板内拖到另一个文件夹 → 移动；按住 Ctrl 拖动 → 复制。
-      · 复制/剪切/粘贴：Ctrl+C / Ctrl+X / Ctrl+V，或右键菜单。
-      · 拖出：拖出面板到聊天窗口或任意程序，等同真实文件（CF_HDROP）。
-      · 双击打开、F2 重命名、Delete 移入应用回收区、右键“复制路径”。
-回收区：内容保存在“当前文件夹/.quietpet_trash”，可通过资源管理器恢复。
-教学：猫咪头顶显示四步使用教学，支持下一步、跳过；完成后隐藏，不再常驻状态文字。
-      右键猫咪 → “重新查看教学”可再次打开。任务状态仍通过猫咪动画展示。
-      当前为测试版，每次启动都重播；发布版将 core/config.py 的 TUTORIAL_TEST_MODE 设为 False，
-      即仅首次使用显示（教学完成状态会保存）。
-图标：Cursor_QuietPet_Icons/ 的 9 个 PNG，程序自动读取、按深色主题着色为浅色并以 16px 渲染
-      （纯标准库解码，无需 Pillow）；找不到时回退为内置符号。
-语言：右键猫咪 → “语言 / Language” 切换 中文/English；文案在 quietpet/locale/。
-配色：右键猫咪 → “界面配色”，可选黑色、白色、暖米色、柔和绿、灰蓝色；立即生效并保存。
-      配色覆盖侧边栏、文件树、技能标签和教学提示，不改变 Windows 全局颜色。
-      网页插件面板也提供同样配色；是否能显示在聊天侧边栏取决于宿主对 MCP Apps 的支持。
-字体：右键猫咪 → “字体大小”，可选 8、10、12、14、16、18、20，默认 10。
-      侧栏文字、菜单、提示和教学文字同步调整，文件行高跟随变化，设置会保存。
-安全：只管理你添加/打开的文件夹，不会扫描/修改其它位置。
-错误日志：若出现异常会写到 %APPDATA%\QuietPet\error.log。
-测试：本目录运行  python -m unittest test_quietpet -v
-
-## MCP（可被 opencode 等客户端控制）
-QuietPet 内置一个 MCP（stdio）服务，暴露以下工具：
-`quietpet_status`（opencode 状态）、`quietpet_skills`（技能列表）、`quietpet_mcp_servers`
-（已配置的 MCP 服务）、`quietpet_list_dir`、`quietpet_read_file`、`quietpet_info`、
-`quietpet_open_folder`、`quietpet_panel`（show/hide/toggle）、`quietpet_side`（left/right）。
-
-控制通道：GUI 在 `127.0.0.1:8765`（`core/config.py` 的 `CONTROL_PORT`）监听一条本地命令通道，
-MCP 服务把工具调用转发给它；因此用 `quietpet_open_folder / panel / side` 可以**实时操控**正在运行的界面。
-
-注册到 opencode（用现成 exe）：
-```sh
-opencode mcp add quietpet -- "D:\\AI\\quietpet_local\\dist\\QuietPetMCP.exe"
-```
-或从源码运行：
-```sh
-opencode mcp add quietpet -- python QuietPet.py --mcp
-```
-注册后可用 `opencode mcp list` 查看；（remote/OAuth 的服务在 opencode 里用 `/mcps` 登录。）
-
-## 打包为 app（无需 Python）
-已用 PyInstaller 生成（`dist/`，已被 .gitignore 忽略）：
-- `dist/QuietPet.exe`     —— GUI 桌宠 + 侧边栏（windowed）
-- `dist/QuietPetMCP.exe`  —— MCP stdio 服务（console）
-
-重新打包：
-```
-py -m pip install pyinstaller
-py -m PyInstaller --noconfirm --onefile --windowed --name QuietPet --hidden-import quietpet.mcp --add-data "quietpet/assets;quietpet/assets" --add-data "Cursor_QuietPet_Icons;Cursor_QuietPet_Icons" QuietPet.py
-py -m PyInstaller --noconfirm --onefile --console --name QuietPetMCP --hidden-import quietpet.app --add-data "quietpet/assets;quietpet/assets" mcp_entry.py
-```
-
-代码结构（quietpet 包，按功能分文件夹）：
-  quietpet/
-    app.py            应用装配入口（猫咪+侧边栏+手势+停靠）
-    core/
-      config.py       路径、配色、设置读写
-      util.py         文件名校验、重名、jsonc 解析
-      i18n.py         语言切换
-      locale/         文案：zh.py、en.py
-    gestures/
-      hotkey.py       全局手势（连按 Alt/Shift/Ctrl/Win 或组合键）
-    native/
-      win32.py        置顶、拖放源(OLE)、拖放目标(IDropTarget/DropTarget)、光标
-    opencode/
-      status.py       opencode 状态、技能、MCP 读取
-    ui/
-      pet.py          猫咪窗口与状态气泡
-      explorer.py     侧边栏、树、技能标签、剪贴板、拖放、停靠
-      widgets.py      悬停提示 ToolTip
-      icons.py        PNG 图标解码/着色/缩放
-    __init__.py / __main__.py
-  QuietPet.py         仅启动入口（.bat / PyInstaller 用）
-
-打包 exe：py -m pip install pyinstaller
-然后：py -m PyInstaller --onefile --windowed --name QuietPet QuietPet.py
+双击 启动PathCat.bat，或运行 python PathCat.py。
+可执行版本请使用 GitHub Releases 的版本化 ZIP。
+点击小猫或 Ctrl+B 打开文件侧栏，拖入文件夹可打开路径。
+拖到路径标签可移动，悬停切换后可继续拖入子目录；Ctrl 拖动复制，Esc 取消。
+右键小猫可调整配色、字体大小、语言、快捷键及重播教学。
+默认普通窗口层级，点击其他软件后不会继续置顶。
+必要的猫咪图片和界面图标随源码及发行包提供。
+旧 QuietPet 设置目录保留兼容，Codex 插件及信息工具适配已删除。

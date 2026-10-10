@@ -10,6 +10,15 @@ All notable desktop changes are recorded here. Version numbers follow SemVer.
 - 文件操作撤销和回收区恢复入口。
 - 多路径标签较多时的导航与布局优化。
 
+## [0.2.0-beta.2] - 2026-10-10
+
+### Changed
+
+- 桌面小猫、侧栏、教学及提示采用普通窗口层级；仅用户点击或快捷键呼出时提升显示，不抢占其他软件。
+- 当前源码删除 Codex/QuietPet 信息工具、插件、MCP 入口和本地控制端口。
+- 文件树聚焦本地文件，移除 AI 技能和 MCP 配置栏目及外部任务状态轮询。
+- 必要的小猫和图标资源完整纳入源码和桌面包；本地拖放测试图片不作为程序资源。
+
 ## [0.2.0-beta.1] - 2026-10-10
 
 ### Added
@@ -42,5 +51,6 @@ All notable desktop changes are recorded here. Version numbers follow SemVer.
 - QuietPet 原始桌宠与文件树、多目录管理、基础 Windows 拖放。
 - 猫咪状态图片、停靠、技能标签和本地兼容控制通道。
 
-[Unreleased]: https://github.com/Oxygen-Wang/PathCat/compare/v0.2.0-beta.1...HEAD
+[Unreleased]: https://github.com/Oxygen-Wang/PathCat/compare/v0.2.0-beta.2...HEAD
+[0.2.0-beta.2]: https://github.com/Oxygen-Wang/PathCat/releases/tag/v0.2.0-beta.2
 [0.2.0-beta.1]: https://github.com/Oxygen-Wang/PathCat/releases/tag/v0.2.0-beta.1

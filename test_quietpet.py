@@ -1,7 +1,6 @@
 # -*- coding: utf-8 -*-
 """Tests for QuietPet core logic. Run:  python -m unittest test_quietpet -v"""
 import json
-import sqlite3
 import sys
 import tempfile
 import unittest
@@ -10,7 +9,6 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from quietpet.gestures import hotkey
-from quietpet.opencode import status
 from quietpet.core import util
 
 
@@ -100,102 +98,6 @@ class TestStripJsonc(unittest.TestCase):
     def test_url_not_broken(self):
         text = '{"url": "https://example.com/x"}'
         self.assertEqual(json.loads(util.strip_jsonc(text))['url'], 'https://example.com/x')
-
-
-class TestSkillsAndMcp(unittest.TestCase):
-    def test_iter_skills_flat_and_dir(self):
-        with tempfile.TemporaryDirectory() as d:
-            root = Path(d) / 'skills'
-            root.mkdir(parents=True)
-            (root / 'review.md').write_text('---\nname: Review\ndescription: do review\n---\nbody')
-            (root / 'git-release').mkdir()
-            (root / 'git-release' / 'SKILL.md').write_text('---\nname: Git Release\ndescription: rel\n---\n')
-            (root / 'note.txt').write_text('x')
-            found = {sid: md for sid, md in status._iter_skills_in(root)}
-            self.assertIn('review', found)
-            self.assertIn('git-release', found)
-            self.assertNotIn('note', found)
-
-    def test_frontmatter(self):
-        with tempfile.TemporaryDirectory() as d:
-            md = Path(d) / 'SKILL.md'
-            md.write_text('---\nname: My Skill\ndescription: does things\n---\nbody')
-            self.assertEqual(status._frontmatter(md), ('My Skill', 'does things'))
-
-    def test_read_skill_text_strips_frontmatter(self):
-        with tempfile.TemporaryDirectory() as d:
-            md = Path(d) / 'SKILL.md'
-            md.write_text('---\nname: X\ndescription: y\n---\n\n# Body\n\nHello\n')
-            text = status.read_skill_text(md)
-            self.assertIn('# Body', text)
-            self.assertNotIn('name:', text)
-
-    def test_read_skill_text_truncates(self):
-        with tempfile.TemporaryDirectory() as d:
-            md = Path(d) / 'SKILL.md'
-            md.write_text('x' * 5000)
-            self.assertLessEqual(len(status.read_skill_text(md, limit=100)), 101)
-
-    def test_list_skills_shape(self):
-        skills = status.list_open_skills(project_dir=None, config_paths=[])
-        self.assertIsInstance(skills, list)
-        for s in skills:
-            self.assertTrue({'id', 'name', 'description', 'path'} <= set(s))
-
-    def test_read_mcp_v2(self):
-        with tempfile.TemporaryDirectory() as d:
-            cfg = Path(d) / 'opencode.json'
-            cfg.write_text(json.dumps({'mcp': {'servers': {
-                'srv1': {'type': 'remote', 'url': 'https://mcp.example.com/mcp'},
-                'srv2': {'type': 'local', 'command': ['npx', 'foo'], 'disabled': True},
-            }}}))
-            by = {s['name']: s for s in status.read_mcp_servers([cfg])}
-            self.assertEqual(by['srv1']['type'], 'remote')
-            self.assertEqual(by['srv1']['detail'], 'https://mcp.example.com/mcp')
-            self.assertTrue(by['srv2']['disabled'])
-            self.assertEqual(by['srv2']['detail'], 'npx foo')
-
-    def test_mcp_ignores_v1_shape(self):
-        with tempfile.TemporaryDirectory() as d:
-            cfg = Path(d) / 'opencode.json'
-            cfg.write_text(json.dumps({'mcp': {'old': {'type': 'local'}}}))
-            self.assertEqual(status.read_mcp_servers([cfg]), [])
-
-    def test_read_mcp_missing(self):
-        self.assertEqual(status.read_mcp_servers([Path('nope.json')]), [])
-
-
-class TestStatus(unittest.TestCase):
-    def _db(self, updated, idle, pending=0):
-        path = Path(tempfile.mkdtemp()) / 'opencode.db'
-        con = sqlite3.connect(str(path))
-        con.execute('create table session_v2 (id text, time_updated integer, time_idle integer)')
-        con.execute('create table session_pending (id text)')
-        con.execute('insert into session_v2 values (?,?,?)', ('s1', updated, idle))
-        for i in range(pending):
-            con.execute('insert into session_pending values (?)', ('p%d' % i,))
-        con.commit()
-        con.close()
-        return path
-
-    def test_busy_when_updated_after_idle(self):
-        self.assertEqual(status.read_opencode_status(self._db(2000, 1000))[0], 'busy')
-
-    def test_busy_when_never_idle(self):
-        self.assertEqual(status.read_opencode_status(self._db(1000, None))[0], 'busy')
-
-    def test_idle(self):
-        self.assertEqual(status.read_opencode_status(self._db(1000, 2000))[0], 'idle')
-
-    def test_pending_wins(self):
-        self.assertEqual(status.read_opencode_status(self._db(1000, 2000, pending=1))[0], 'wait')
-
-    def test_off_when_missing(self):
-        self.assertEqual(status.read_opencode_status(Path('no_such.db'))[0], 'off')
-
-    def test_none_on_unreadable(self):
-        # a directory passed as a db path is unreadable -> None (keep previous)
-        self.assertIsNone(status.read_opencode_status(Path(tempfile.mkdtemp())))
 
 
 @unittest.skipUnless(sys.platform == 'win32', 'Windows only')
@@ -342,7 +244,7 @@ class TestI18n(unittest.TestCase):
     def test_format(self):
         from quietpet.core import i18n
         i18n.set_language('en')
-        self.assertIn('@x', i18n.t('menu_copy_skill_ref', ref='@x'))
+        self.assertIn('Ctrl+Q', i18n.t('hotkey_warn', name='Ctrl+Q'))
 
     def test_locale_is_separate_folder(self):
         from quietpet.core import locale

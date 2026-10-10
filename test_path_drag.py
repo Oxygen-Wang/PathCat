@@ -27,8 +27,6 @@ class PathDragTests(unittest.TestCase):
 
     def tearDown(self):
         self.ex._cancel_watch()
-        if self.ex._skills_after is not None:
-            self.ex.skills_area.after_cancel(self.ex._skills_after)
         self.root.destroy()
         self.temp.cleanup()
 

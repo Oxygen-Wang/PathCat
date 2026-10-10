@@ -45,7 +45,7 @@ class ToolTip:
         tip = tk.Toplevel(self.widget)
         tip.wm_overrideredirect(True)
         try:
-            tip.attributes('-topmost', True)
+            tip.attributes('-topmost', False)
         except tk.TclError:
             pass
         tk.Label(tip, text=self.text, bg=config.BTN, fg=config.FG,

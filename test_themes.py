@@ -47,16 +47,6 @@ class ThemeTests(unittest.TestCase):
                     ex.panel.destroy()
                 window.destroy()
 
-    def test_busy_animation_uses_working_state(self):
-        pet = object.__new__(Pet)
-        pet.state = 'idle'
-        pet.draw_status = Mock()
-        pet.set_state = Mock()
-        with patch('quietpet.integrations.codex.read_status', return_value=('busy', '工作中')):
-            pet.refresh_status()
-        self.assertEqual(pet.base_state, 'working')
-        pet.set_state.assert_called_once_with('working')
-
 
 if __name__ == '__main__':
     unittest.main()

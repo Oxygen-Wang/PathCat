@@ -8,11 +8,9 @@ from tkinter import messagebox, simpledialog
 
 from .core import config
 from .core import i18n
-from .control import ControlServer
 from .ui.explorer import Explorer
 from .gestures.hotkey import GlobalHotkey, is_tap_gesture, parse_hotkey
 from .ui.pet import Pet
-from .native.win32 import force_top
 
 
 class QuietPet:
@@ -41,7 +39,6 @@ class QuietPet:
         self.tutorial = Tutorial(self.root, self.settings, self.save)
         if should_show(self.settings):
             self.root.after_idle(self.tutorial.start)
-        self.control = ControlServer(self._control, config.CONTROL_PORT)
 
         self.hotkey_text = (self.settings.get('hotkey') or config.DEFAULT_HOTKEY).strip()
         self.hotkey_queue = queue.Queue()
@@ -51,17 +48,12 @@ class QuietPet:
 
         self.root.bind('<Escape>', lambda e: self.explorer.hide())
         self.pet.enable_drop()
-        self.control.start()
         self.explorer.on_visibility = self.on_panel_visibility
         self.explorer.on_event = self.pet.play
         self.start_hotkey()
 
         self._tick('hotkey', 150, self.poll_hotkey)
-        self._tick('control', 60, self.pump_control)
-        self._tick('status', 300, self.refresh_status)
-        self._tick('raise', 400, self.pet.raise_pet)
         self._tick('dock', 700, self.dock_pet)
-        self._tick('periodic', 1500, self.periodic)
 
     # --- timers ------------------------------------------------------------
     def _tick(self, key, delay, fn):
@@ -74,9 +66,6 @@ class QuietPet:
                 return
         self._timers[key] = self.root.after(delay, wrapped)
 
-    def refresh_status(self):
-        self.pet.refresh_status()
-        self._tick('status', 2000, self.refresh_status)
 
     def poll_hotkey(self):
         try:
@@ -132,61 +121,6 @@ class QuietPet:
         self.pet.play('panel_open' if visible else 'panel_close', ms=700)
         self.root.after(30, self.dock_pet)
 
-    # --- MCP control channel ----------------------------------------------
-    def pump_control(self):
-        self.control.pump()
-        self._tick('control', 60, self.pump_control)
-
-    def _control(self, cmd, args):
-        from .integrations import codex
-        ex = self.explorer
-        if cmd == 'theme':
-            name = args.get('name')
-            from .core.themes import PALETTES
-            if name not in PALETTES:
-                raise ValueError('Unknown theme')
-            self.set_theme(name)
-            return {'ok': True, 'result': {'theme': name}}
-        if cmd in ('file_view', 'file_ignore', 'file_transfer'):
-            from .integrations.file_panel import handle
-            return {'ok': True, 'result': handle(ex, cmd, args)}
-        if cmd == 'codex_status':
-            return {'ok': True, 'result': codex.report_status(
-                args.get('kind'), args.get('session_id'), args.get('ttl', 300))}
-        if cmd in (None, 'info'):
-            return {'ok': True, 'result': {
-                'folder': str(ex.folder), 'roots': list(ex.roots),
-                'side': self.settings.get('panel_side', 'right'),
-                'width': ex.panel_width(), 'visible': self._panel_visible(),
-                'status': self.pet.status_kind, 'version': config.VERSION,
-                'integration': codex.snapshot(), 'theme': self.settings.get('theme', 'dark'),
-                'hotkey': self.hotkey_text, 'hotkey_registered': self.hotkey_ok,
-                'font_size': config.FONT_SIZE,
-                'tutorial': {'visible': self.tutorial.window is not None,
-                             'step': self.tutorial.step + 1,
-                             'complete': bool(self.settings.get('tutorial_complete')),
-                             'test_mode': config.TUTORIAL_TEST_MODE}}}
-        if cmd == 'open_folder':
-            p = Path(args.get('path') or '')
-            if p.is_dir():
-                ex.set_folder(p)
-                return {'ok': True, 'result': str(p)}
-            return {'ok': False, 'error': 'not a folder: %s' % p}
-        if cmd == 'panel':
-            action = args.get('action', 'toggle')
-            if action == 'show':
-                ex.show()
-            elif action == 'hide':
-                ex.hide()
-            else:
-                ex.toggle()
-            return {'ok': True, 'result': {'visible': self._panel_visible()}}
-        if cmd == 'side':
-            side = 'left' if args.get('side') == 'left' else 'right'
-            ex.set_side(side)
-            self.dock_pet()
-            return {'ok': True, 'result': side}
-        return {'ok': False, 'error': 'unknown cmd: %s' % cmd}
 
     def _panel_visible(self):
         return bool(self.explorer.panel and self.explorer.panel.winfo_exists()
@@ -232,7 +166,6 @@ class QuietPet:
         y = max(0, min(self.root.winfo_y(), max(0, sh - 98)))
         self.root.geometry(f'80x98+{x}+{y}')
         self.settings.update(x=x, y=y)
-        self.pet.raise_pet()
 
     def dock_pet(self):
         """Closed -> cat at the screen edge; open -> cat on the panel's inner edge."""
@@ -243,7 +176,6 @@ class QuietPet:
         self.root.geometry(f'80x98+{x}+{y}')
         self.settings.update(x=x, y=y)
         self.save()
-        self.pet.raise_pet()
 
     def pet_menu(self, ev):
         menu = tk.Menu(self.root, tearoff=0)
@@ -326,7 +258,6 @@ class QuietPet:
         if self.explorer.panel and self.explorer.panel.winfo_exists() and \
                 self.explorer.panel.state() == 'normal':
             self.explorer.panel.lift()
-            force_top(self.explorer.panel.winfo_id())
         self.dock_pet()
 
     def change_hotkey(self):
@@ -347,14 +278,6 @@ class QuietPet:
         self.start_hotkey()
 
     # --- lifecycle ---------------------------------------------------------
-    def periodic(self):
-        # Do NOT rebuild the tree here: it would move rows out from under the
-        # user mid-drag. The tree refreshes on demand and after operations.
-        self.pet.raise_pet()
-        if (self.explorer.panel and self.explorer.panel.winfo_exists()
-                and self.explorer.panel.state() == 'normal'):
-            force_top(self.explorer.panel.winfo_id())
-        self._tick('periodic', 8000, self.periodic)
 
     def quit(self):
         self.tutorial.close()
@@ -362,16 +285,19 @@ class QuietPet:
         self.save()
         if self.hotkey_manager:
             self.hotkey_manager.stop()
-        try:
-            self.control.stop()
-        except Exception:
-            pass
         for after_id in list(self._timers.values()):
             try:
                 self.root.after_cancel(after_id)
             except tk.TclError:
                 pass
         self._timers.clear()
+        # Cancel widget animation, tooltip and deferred docking callbacks too.
+        # They share this Tk interpreter and must not outlive its windows.
+        for after_id in self.root.tk.splitlist(self.root.tk.call('after', 'info')):
+            try:
+                self.root.after_cancel(after_id)
+            except tk.TclError:
+                pass
         self.root.destroy()
 
     def run(self):
