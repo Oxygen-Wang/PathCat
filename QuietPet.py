@@ -1,10 +1,22 @@
 # -*- coding: utf-8 -*-
-"""Launcher for QuietPet.
+"""QuietPet launcher.
 
-Kept as a top-level script so the .bat file and PyInstaller still work.
-The implementation now lives in the ``quietpet`` package.
+Runs the GUI by default, or the MCP stdio server with ``--mcp``:
+
+    python QuietPet.py
+    python QuietPet.py --mcp
 """
-from quietpet.app import main
+import sys
+
+
+def main():
+    if '--mcp' in sys.argv:
+        from quietpet.mcp import main as mcp_main
+        mcp_main()
+    else:
+        from quietpet.app import main as app_main
+        app_main()
+
 
 if __name__ == '__main__':
     main()

@@ -36,6 +36,37 @@ MCP(🔌)：读取 opencode V2 的 mcp.servers，显示 名称 · 类型 · url/
 错误日志：若出现异常会写到 %APPDATA%\QuietPet\error.log。
 测试：本目录运行  python -m unittest test_quietpet -v
 
+## MCP（可被 opencode 等客户端控制）
+QuietPet 内置一个 MCP（stdio）服务，暴露以下工具：
+`quietpet_status`（opencode 状态）、`quietpet_skills`（技能列表）、`quietpet_mcp_servers`
+（已配置的 MCP 服务）、`quietpet_list_dir`、`quietpet_read_file`、`quietpet_info`、
+`quietpet_open_folder`、`quietpet_panel`（show/hide/toggle）、`quietpet_side`（left/right）。
+
+控制通道：GUI 在 `127.0.0.1:8765`（`core/config.py` 的 `CONTROL_PORT`）监听一条本地命令通道，
+MCP 服务把工具调用转发给它；因此用 `quietpet_open_folder / panel / side` 可以**实时操控**正在运行的界面。
+
+注册到 opencode（用现成 exe）：
+```sh
+opencode mcp add quietpet -- "D:\\AI\\quietpet_local\\dist\\QuietPetMCP.exe"
+```
+或从源码运行：
+```sh
+opencode mcp add quietpet -- python QuietPet.py --mcp
+```
+注册后可用 `opencode mcp list` 查看；（remote/OAuth 的服务在 opencode 里用 `/mcps` 登录。）
+
+## 打包为 app（无需 Python）
+已用 PyInstaller 生成（`dist/`，已被 .gitignore 忽略）：
+- `dist/QuietPet.exe`     —— GUI 桌宠 + 侧边栏（windowed）
+- `dist/QuietPetMCP.exe`  —— MCP stdio 服务（console）
+
+重新打包：
+```
+py -m pip install pyinstaller
+py -m PyInstaller --noconfirm --onefile --windowed --name QuietPet --hidden-import quietpet.mcp --add-data "quietpet/assets;quietpet/assets" --add-data "Cursor_QuietPet_Icons;Cursor_QuietPet_Icons" QuietPet.py
+py -m PyInstaller --noconfirm --onefile --console --name QuietPetMCP --hidden-import quietpet.app --add-data "quietpet/assets;quietpet/assets" mcp_entry.py
+```
+
 代码结构（quietpet 包，按功能分文件夹）：
   quietpet/
     app.py            应用装配入口（猫咪+侧边栏+手势+停靠）

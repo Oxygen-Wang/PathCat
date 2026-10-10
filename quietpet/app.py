@@ -8,6 +8,7 @@ from tkinter import messagebox, simpledialog
 
 from .core import config
 from .core import i18n
+from .control import ControlServer
 from .ui.explorer import Explorer
 from .gestures.hotkey import GlobalHotkey, is_tap_gesture, parse_hotkey
 from .ui.pet import Pet
@@ -30,6 +31,7 @@ class QuietPet:
         self.pet.on_drop = self.on_cat_drop
 
         self.explorer = Explorer(self.root, self.settings, self.pet_pos, self.save)
+        self.control = ControlServer(self._control, config.CONTROL_PORT)
 
         self.hotkey_text = (self.settings.get('hotkey') or config.DEFAULT_HOTKEY).strip()
         self.hotkey_queue = queue.Queue()
@@ -39,11 +41,13 @@ class QuietPet:
 
         self.root.bind('<Escape>', lambda e: self.explorer.hide())
         self.pet.enable_drop()
+        self.control.start()
         self.explorer.on_visibility = self.on_panel_visibility
         self.explorer.on_event = self.pet.play
         self.start_hotkey()
 
         self._tick('hotkey', 150, self.poll_hotkey)
+        self._tick('control', 60, self.pump_control)
         self._tick('status', 300, self.refresh_status)
         self._tick('raise', 400, self.pet.raise_pet)
         self._tick('dock', 700, self.dock_pet)
@@ -114,10 +118,44 @@ class QuietPet:
         self.dock_pet()
 
     def on_panel_visibility(self):
-        visible = (self.explorer.panel and self.explorer.panel.winfo_exists()
-                   and self.explorer.panel.state() == 'normal')
+        visible = self._panel_visible()
         self.pet.play('panel_open' if visible else 'panel_close', ms=700)
         self.root.after(30, self.dock_pet)
+
+    # --- MCP control channel ----------------------------------------------
+    def pump_control(self):
+        self.control.pump()
+        self._tick('control', 60, self.pump_control)
+
+    def _control(self, cmd, args):
+        ex = self.explorer
+        if cmd in (None, 'info'):
+            return {'ok': True, 'result': {
+                'folder': str(ex.folder), 'roots': list(ex.roots),
+                'side': self.settings.get('panel_side', 'right'),
+                'width': ex.panel_width(), 'visible': self._panel_visible(),
+                'status': self.pet.status_kind, 'version': config.VERSION}}
+        if cmd == 'open_folder':
+            p = Path(args.get('path') or '')
+            if p.is_dir():
+                ex.set_folder(p)
+                return {'ok': True, 'result': str(p)}
+            return {'ok': False, 'error': 'not a folder: %s' % p}
+        if cmd == 'panel':
+            action = args.get('action', 'toggle')
+            if action == 'show':
+                ex.show()
+            elif action == 'hide':
+                ex.hide()
+            else:
+                ex.toggle()
+            return {'ok': True, 'result': {'visible': self._panel_visible()}}
+        if cmd == 'side':
+            side = 'left' if args.get('side') == 'left' else 'right'
+            ex.set_side(side)
+            self.dock_pet()
+            return {'ok': True, 'result': side}
+        return {'ok': False, 'error': 'unknown cmd: %s' % cmd}
 
     def _panel_visible(self):
         return bool(self.explorer.panel and self.explorer.panel.winfo_exists()
@@ -258,6 +296,10 @@ class QuietPet:
         self.save()
         if self.hotkey_manager:
             self.hotkey_manager.stop()
+        try:
+            self.control.stop()
+        except Exception:
+            pass
         for after_id in list(self._timers.values()):
             try:
                 self.root.after_cancel(after_id)

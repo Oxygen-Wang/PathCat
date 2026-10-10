@@ -7,6 +7,7 @@ from pathlib import Path
 
 IS_WIN = sys.platform == 'win32'
 APP = 'QuietPet'
+VERSION = '0.1.0'
 
 HOME = Path(os.getenv('USERPROFILE') or Path.home())
 DATA = Path(os.getenv('APPDATA') or HOME) / APP
@@ -31,6 +32,9 @@ OC_DB_CANDIDATES = [
     HOME / '.local' / 'share' / 'opencode' / 'opencode.db',
     Path(os.getenv('LOCALAPPDATA') or HOME) / 'opencode' / 'opencode.db',
 ]
+
+# Local control channel used by the MCP bridge (localhost only).
+CONTROL_PORT = 8765
 
 # Palette (Cursor / VS Code dark sidebar feel)
 BG = '#1e1f22'
