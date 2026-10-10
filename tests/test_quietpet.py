@@ -1,12 +1,12 @@
 # -*- coding: utf-8 -*-
-"""Tests for QuietPet core logic. Run:  python -m unittest test_quietpet -v"""
+"""Tests for QuietPet core logic. Run: python -m unittest tests.test_quietpet -v"""
 import json
 import sys
 import tempfile
 import unittest
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from quietpet.gestures import hotkey
 from quietpet.core import util
@@ -46,9 +46,9 @@ class TestHotkey(unittest.TestCase):
         self.assertTrue(hotkey.is_tap_gesture('Alt'))
         self.assertIsNone(hotkey.tap_gesture('Ctrl+Alt+Q'))
 
-    def test_default_hotkey_is_ctrl_b(self):
+    def test_default_hotkey_is_shift_z(self):
         from quietpet.core import config
-        self.assertEqual(hotkey.parse_hotkey(config.DEFAULT_HOTKEY), (hotkey.MOD_CONTROL, ord('B')))
+        self.assertEqual(hotkey.parse_hotkey(config.DEFAULT_HOTKEY), (hotkey.MOD_SHIFT, ord('Z')))
 
     def test_global_hotkey_shift_mode(self):
         gh = hotkey.GlobalHotkey('Shift', None)

@@ -27,6 +27,6 @@ jobs:
       - name: Verify version consistency
         run: python tools/check_version.py
       - name: Test desktop and file operations
-        run: python -m unittest discover -s . -p "test_*.py" -v
+        run: python -m unittest discover -s tests -p "test_*.py" -v
       - name: Compile Python source
         run: python -m compileall -q quietpet PathCat.py QuietPet.py tools

@@ -40,6 +40,33 @@ class PathDragTests(unittest.TestCase):
         chip = self.ex._root_chips[str(self.second)]
         return chip.winfo_rootx() + 5, chip.winfo_rooty() + 5
 
+    def test_file_companion_follows_and_cancels_with_drag(self):
+        follow = self.ex.on_file_drag = Mock()
+        self.begin()
+        self.ex.tree.after_cancel(self.ex._watch_after)
+        self.ex._watch_after = None
+        x, y = self.tab_point()
+        with patch('quietpet.ui.explorer.get_cursor_pos', return_value=(x, y)), \
+             patch('quietpet.ui.explorer.left_button_down', return_value=True):
+            self.ex._watch_external_drag()
+        follow.assert_called_with((x, y))
+        self.ex.cancel_drag()
+        follow.assert_called_with(None)
+        self.assertTrue(self.source.exists())
+
+    def test_native_drag_failure_always_hides_companion(self):
+        follow = self.ex.on_file_drag = Mock()
+        self.begin()
+        self.ex.tree.after_cancel(self.ex._watch_after)
+        self.ex._watch_after = None
+        with patch('quietpet.ui.explorer.get_cursor_pos', return_value=(-100, -100)), \
+             patch('quietpet.ui.explorer.left_button_down', return_value=True), \
+             patch('quietpet.ui.explorer.start_ole_drag', side_effect=RuntimeError('drag failed')):
+            with self.assertRaises(RuntimeError):
+                self.ex._watch_external_drag()
+        follow.assert_called_with(None)
+        self.assertTrue(self.source.exists())
+
     def test_direct_cross_path_move_and_select_destination(self):
         self.begin()
         x, y = self.tab_point()

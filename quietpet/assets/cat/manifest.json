@@ -5,6 +5,13 @@
   ],
   "frame_ms": 120,
   "states": {
+    "file_drag": {
+      "loop": true,
+      "frames": [],
+      "optional_frames": [
+        "file_drag/cat_file_drag_empty_0.png"
+      ]
+    },
     "idle": {
       "loop": true,
       "frames": [

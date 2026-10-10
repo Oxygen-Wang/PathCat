@@ -1,4 +1,5 @@
 """Build the desktop EXE and a versioned ZIP with bundled-license sources."""
+import argparse
 import hashlib
 import struct
 import subprocess
@@ -12,6 +13,10 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--output-dir', type=Path, default=ROOT / 'dist',
+                        help='Destination directory; use a separate directory when an existing EXE is running')
+    args = parser.parse_args()
     # Read the interpreter PE machine field; Windows sandbox environments may
     # omit PROCESSOR_ARCHITECTURE, which makes platform.machine() empty.
     interpreter = Path(sys.executable).read_bytes()
@@ -19,8 +24,8 @@ def main():
     if sys.platform != 'win32' or struct.unpack_from('<H', interpreter, pe_offset + 4)[0] != 0x8664:
         raise SystemExit('Build on Windows x64 for this release target')
     version = check()
-    output = ROOT / 'dist'
-    output.mkdir(exist_ok=True)
+    output = args.output_dir.resolve()
+    output.mkdir(parents=True, exist_ok=True)
     build = ROOT / 'build'
     build.mkdir(exist_ok=True)
     numbers = tuple(int(n) for n in version.split('-')[0].split('.'))
@@ -36,6 +41,7 @@ def main():
         encoding='utf-8')
     subprocess.run([sys.executable, '-m', 'PyInstaller', '--noconfirm', '--clean',
                     '--onefile', '--windowed', '--name', 'PathCat',
+                    '--icon', str(ROOT / 'quietpet/assets/pathcat.ico'),
                     '--distpath', str(output), '--workpath', str(ROOT / 'build'),
                     '--specpath', str(ROOT / 'build'),
                     '--version-file', str(resource),

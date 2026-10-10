@@ -18,10 +18,10 @@ DEFAULT_FOLDER = HOME / 'Documents' / APP
 
 # Default summon shortcut. Other combinations or double-tap gestures can be
 # selected from the pet's right-click menu.
-DEFAULT_HOTKEY = 'Ctrl+B'
+DEFAULT_HOTKEY = 'Shift+Z'
 FONT_SIZE = 10
-# Preview builds replay onboarding on each launch. Release builds set False.
-TUTORIAL_TEST_MODE = '-' in VERSION
+# Teaching is opened explicitly from the pet menu.
+TUTORIAL_TEST_MODE = False
 
 
 def apply_font_size(value):
@@ -53,6 +53,14 @@ def apply_theme(name):
     selected = name if name in PALETTES else 'dark'
     globals().update(palette(selected))
     return selected
+
+# Read local skills without changing their documents.
+GLOBAL_SKILL_SOURCES = [HOME / '.claude/skills', HOME / '.agents/skills',
+                        HOME / '.config/opencode/skills', HOME / '.cursor/skills',
+                        HOME / '.codex/skills']
+PROJECT_SKILL_SUBDIRS = ['.claude/skills', '.agents/skills', '.opencode/skills',
+                        '.cursor/skills', '.codex/skills']
+OC_CONFIG = HOME / '.config/opencode/opencode.json'
 
 # Tree helpers
 TRASH = '.quietpet_trash'

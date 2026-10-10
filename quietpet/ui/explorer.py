@@ -1,5 +1,7 @@
 # -*- coding: utf-8 -*-
 """The file sidebar: lazy tree, clipboard and cross-path drag/copy/move."""
+import queue
+import threading
 import os
 import time
 import shutil
@@ -12,6 +14,7 @@ from tkinter import ttk, filedialog, simpledialog, messagebox
 from ..core import config
 from ..core.i18n import t
 from .icons import load_icons
+from ..core.skills import list_open_skills, read_skill_text
 from ..core.util import safe_name, unique_dest
 from ..core.ignore import (project_ignored, read_ignore_lines, write_ignore_lines,
                            transfer_allowed, top_level_paths, escape_pattern)
@@ -31,6 +34,13 @@ class Explorer:
         self.get_pet_pos = get_pet_pos
         self.save = save_settings
 
+        self.search_var = tk.StringVar(master=root)
+        self._search_after = None
+        self._search_cancel = None
+        self.search_entry = None
+        self.search_bar = None
+        self._search_visible = False
+        self.search_status = None
         self.panel = None
         self.inner = None
         self.tree = None
@@ -40,6 +50,7 @@ class Explorer:
         self.loaded = set()
         self.clip = None
         self.on_event = lambda name, ms=900: None
+        self.on_file_drag = lambda point: None
         self._drag_event = None
         self._press_xy = None
         self._drag_moved = False
@@ -54,6 +65,16 @@ class Explorer:
         self.show_ignored = False
 
 
+        self.skills_area = None
+        self.skills_header = None
+        self._skills = []
+        self._skills_width = 0
+        self._skills_after = None
+        self._skills_expanded = bool(settings.get('skills_expanded', False))
+
+        self.usage = dict(settings.get('skill_usage') or {})
+        self.labels = dict(settings.get('skill_labels') or {})
+        self._body_cache = {}
         self._press_iid = None
         self._drag_items = None
         self._drag_text = None
@@ -68,6 +89,8 @@ class Explorer:
         self._expand_state = False
         self.toggle_btn = None
         self.on_visibility = lambda: None
+        self.on_resize = lambda: None
+        self._resize_after = None
 
         roots = []
         for r in (settings.get('roots') or []):
@@ -106,6 +129,9 @@ class Explorer:
             tip._hide()
         revoke_drop_target(self.panel.winfo_id())
         revoke_drop_target(self.tree.winfo_id())
+        self._cancel_search()
+        self._cancel_skills_layout()
+        self._cancel_resize()
         self.panel.destroy()
         self.panel = None
         self.tree = None
@@ -116,21 +142,27 @@ class Explorer:
         if not visible:
             self.hide()
 
-    def show(self):
+    def show(self, activate=True):
         if self.panel and self.panel.winfo_exists():
             self.panel.deiconify()
             self.position()
             self.panel.lift()
             self.update_labels()
-            self.rebuild(preserve=False)
+            self.rebuild(preserve=True)
+            if activate:
+                self.panel.focus_force()
+                self.tree.focus_set()
             self.on_visibility()
             return
         w = tk.Toplevel(self.root)
         self.panel = w
         w.title(t('panel_title'))
         w.configure(bg=config.BG)
-        w.overrideredirect(True)
-        w.attributes('-topmost', False)
+        w.overrideredirect(False)
+        w.protocol('WM_DELETE_WINDOW', self.hide)
+        w.attributes('-topmost', True)
+        w.bind('<Configure>', self._on_panel_configure, add='+')
+        w.bind('<Destroy>', lambda e: self._cancel_resize() if e.widget is w else None, add='+')
         w.protocol('WM_DELETE_WINDOW', self.hide)
         self.icons = load_icons(master=self.root, size=16, color=config.FG)
         self.tips = []
@@ -152,7 +184,8 @@ class Explorer:
                 ('folder', '📂', 'tip_open_folder', self.choose_folder),
                 ('new-folder', '＋🗂', 'tip_new_folder', self.new_folder),
                 ('new-file', '＋📄', 'tip_new_file', self.import_files),
-                ('refresh', '↻', 'tip_refresh', lambda: self.rebuild(preserve=True))]:
+                ('refresh', '↻', 'tip_refresh', lambda: self.rebuild(preserve=True)),
+                ('search', '⌕', 'tip_search', self.focus_search)]:
             self._icon_button(toolbar, icon_name, fallback, cb, tip=t(tip)).pack(side='left', padx=2)
         self.toggle_btn = tk.Button(toolbar, text='⊞', command=self.toggle_expand,
                                     bg=config.BTN, fg=config.FG, activebackground=config.BTN_HOVER,
@@ -163,6 +196,24 @@ class Explorer:
         self.tips.append(ToolTip(self.toggle_btn, t('tip_expand_all')))
         self._button(toolbar, '⚙', self.edit_ignore, small=True,
                      tip=t('ignore_title')).pack(side='left', padx=2)
+
+        search_bar = tk.Frame(self.inner, bg=config.BG)
+        self.search_bar = search_bar
+        self.search_entry = tk.Entry(search_bar, textvariable=self.search_var,
+                                     bg=config.BTN, fg=config.FG, insertbackground=config.FG,
+                                     relief='flat', font=config.ui_font(10))
+        self.search_entry.pack(side='left', fill='x', expand=True, ipady=5)
+        self.search_entry.bind('<KeyRelease>', self._search_changed)
+        self.search_entry.bind('<Return>', lambda e: self._search_now())
+        self.search_entry.bind('<Escape>', self.clear_search)
+        self._button(search_bar, '×', self.clear_search, small=True,
+                     tip=t('search_clear')).pack(side='right')
+        self.search_status = tk.Label(self.inner, text=t('search_hint'), bg=config.BG,
+                                      fg=config.MUTED, anchor='w', font=config.ui_font(9))
+        if self._search_visible:
+            search_bar.pack(fill='x', padx=12, pady=(0, 6))
+            self.search_status.pack(fill='x', padx=12, pady=(0, 6))
+        w.bind('<Control-f>', self.focus_search)
 
         style = ttk.Style(w)
         try:
@@ -185,6 +236,7 @@ class Explorer:
         tree.bind('<Double-1>', self.on_double)
         tree.bind('<Button-3>', self.context_menu)
         tree.bind('<ButtonPress-1>', self.drag_start)
+        tree.bind('<ButtonPress-1>', lambda _event: tree.focus_set(), add='+')
         tree.bind('<ButtonRelease-1>', self.drag_end)
         tree.bind('<Escape>', self.cancel_drag)
         tree.bind('<<TreeviewOpen>>', self.on_open)
@@ -200,16 +252,33 @@ class Explorer:
                           bg=config.BG, fg=config.MUTED, font=config.ui_font(9), anchor='w')
         footer.pack(side='bottom', fill='x', padx=14, pady=10)
 
+        # Skills dock at the bottom and fill from bottom to top.
+        self.skills_area = tk.Frame(self.inner, bg=config.BG)
+        self.skills_area.pack(side='bottom', fill='x', padx=10, pady=(0, 2))
+        self.skills_area.bind('<Configure>', self._on_skills_configure)
+        self.skills_area.bind('<Destroy>', lambda e: self._cancel_skills_layout()
+                              if e.widget is self.skills_area else None)
+        skills_head = tk.Frame(self.inner, bg=config.BG)
+        skills_head.pack(side='bottom', fill='x', padx=12, pady=(0, 2))
+        self.skills_header = tk.Label(skills_head, text='', bg=config.BG, fg=config.MUTED,
+                                      font=config.ui_font(8, 'bold'), anchor='w', cursor='hand2')
+        self.skills_header.pack(side='left')
+        self.skills_header.bind('<Button-1>', lambda e: self.toggle_skills())
+
         body.pack(fill='both', expand=True, padx=(8, 6))
 
         self.update_labels()
         self.rebuild(preserve=False)
-        if not register_drop_target(w.winfo_id(), self._on_panel_drop) and \
-                not register_drop_target(tree.winfo_id(), self._on_panel_drop):
+        if not register_drop_target(w.winfo_id(), self._on_panel_drop,
+                                    on_drag=lambda point: self.on_file_drag(point)) and \
+                not register_drop_target(tree.winfo_id(), self._on_panel_drop,
+                                         on_drag=lambda point: self.on_file_drag(point)):
             install_drop_targets(w, self.on_os_drop, self.drop_targets)
         w.lift()
         try:
-            w.focus_force()
+            if activate:
+                w.focus_force()
+                tree.focus_set()
         except tk.TclError:
             pass
         self.on_visibility()
@@ -223,12 +292,34 @@ class Explorer:
         pw = self.panel_width()
         side = self.settings.get('panel_side', 'right')
         x = sw - pw if side == 'right' else 0
-        self.panel.geometry(f'{pw}x{sh}+{x}+0')
+        self.panel.geometry(f'{pw}x{max(200, sh - 80)}+{x}+0')
 
     def panel_width(self):
         sw = self.root.winfo_screenwidth()
         pw = int(self.settings.get('panel_width') or 340)
-        return max(260, min(pw, max(260, sw - 80)))
+        return max(260, min(pw, max(260, sw - self.root.winfo_width())))
+
+    def _cancel_resize(self):
+        if self._resize_after is not None:
+            self.root.after_cancel(self._resize_after)
+            self._resize_after = None
+
+    def _on_panel_configure(self, event):
+        if event.widget is not self.panel or event.width < 260:
+            return
+        self._cancel_resize()
+        if event.width != self.panel_width():
+            self._resize_after = self.root.after(200, self._remember_panel_width)
+
+    def _remember_panel_width(self):
+        self._resize_after = None
+        if not self.panel or not self.panel.winfo_exists() or self.panel.state() != 'normal':
+            return
+        self.settings['panel_width'] = self.panel.winfo_width()
+        self.settings['panel_width'] = self.panel_width()
+        self.save()
+        self.position()
+        self.on_resize()
 
     def set_side(self, side):
         side = 'left' if side == 'left' else 'right'
@@ -238,6 +329,15 @@ class Explorer:
         self.position()
 
     def hide(self):
+        self._cancel_resize()
+        self._cancel_skills_layout()
+        self._cancel_search()
+        self.cancel_drag()
+        self.search_var.set('')
+        self._search_visible = False
+        if self.search_bar is not None and self.search_bar.winfo_exists():
+            self.search_bar.pack_forget()
+            self.search_status.pack_forget()
         if self.panel and self.panel.winfo_exists():
             self.panel.withdraw()
         self.on_visibility()
@@ -340,6 +440,20 @@ class Explorer:
         self.rebuild(preserve=False)
 
 
+    def skill_config_paths(self):
+        paths = [config.OC_CONFIG]
+        try:
+            start = self.folder.resolve()
+            for base in [start] + list(start.parents):
+                for name in ('opencode.json', 'opencode.jsonc',
+                             '.opencode/opencode.json', '.opencode/opencode.jsonc'):
+                    p = base / name
+                    if p.exists() and p not in paths:
+                        paths.append(p)
+        except OSError:
+            pass
+        return paths
+
     def on_os_drop(self, paths):
         self._copy_paths([Path(p) for p in paths], self.target_dir())
         self.on_event('file_in')
@@ -414,6 +528,8 @@ class Explorer:
 
 
     def _ensure_loaded(self, iid):
+        if self.search_var.get().strip():
+            return
         if iid in self.loaded:
             return
         self.loaded.add(iid)
@@ -455,6 +571,13 @@ class Explorer:
     def rebuild(self, preserve=True):
         if not self.tree or not self.tree.winfo_exists():
             return
+        self._build_skills()
+        if self.search_var.get().strip():
+            self._search_now()
+            return
+        self._cancel_search()
+        if self.search_status is not None:
+            self.search_status.configure(text=t('search_hint'))
         opened = self._opened_paths() if preserve else set()
         selected = self.tree.selection() if preserve else ()
         self.loaded = set()
@@ -472,6 +595,89 @@ class Explorer:
         selected = [iid for iid in selected if self.tree.exists(iid)]
         if selected:
             self.tree.selection_set(selected)
+
+    # --- filename search --------------------------------------------------
+    def focus_search(self, event=None):
+        self._search_visible = True
+        # Insert before the file tree while retaining the Skills dock below it.
+        self.search_bar.pack(fill='x', padx=12, pady=(0, 6), before=self.tree.master)
+        self.search_status.pack(fill='x', padx=12, pady=(0, 6), before=self.tree.master)
+        self.search_entry.focus_set()
+        self.search_entry.selection_range(0, 'end')
+        return 'break'
+
+    def _cancel_search(self):
+        if self._search_after is not None:
+            self.root.after_cancel(self._search_after)
+            self._search_after = None
+        if self._search_cancel is not None:
+            self._search_cancel.set()
+            self._search_cancel = None
+
+    def clear_search(self, event=None):
+        self._search_visible = False
+        self.search_bar.pack_forget()
+        self.search_status.pack_forget()
+        self.tree.focus_set()
+        self.search_var.set('')
+        self.rebuild(preserve=False)
+        return 'break'
+
+    def _search_changed(self, event=None):
+        if event is not None and event.keysym in ('Escape', 'Return'):
+            return
+        self._cancel_search()
+        self._search_after = self.root.after(250, self._search_now)
+
+    def _search_now(self):
+        self._cancel_search()
+        query = self.search_var.get().strip()
+        if not query:
+            self.rebuild(preserve=False)
+            return 'break'
+        self.cancel_drag()
+        self.loaded.clear()
+        self.tree.delete(*self.tree.get_children())
+        self.search_status.configure(text=t('search_running'))
+        self.on_event('search')
+        cancelled = threading.Event()
+        self._search_cancel = cancelled
+        results = queue.Queue()
+        folder, show_ignored = self.folder, self.show_ignored
+
+        def worker():
+            from ..core.search import find_paths
+            try:
+                for count, path in enumerate(find_paths(folder, query, cancelled, show_ignored), 1):
+                    results.put(('path', path))
+                    if count >= 2000:
+                        results.put(('limit', None))
+                        return
+                results.put(('done', None))
+            except Exception:
+                results.put(('error', None))
+
+        def receive():
+            self._search_after = None
+            if cancelled.is_set() or not self.tree or not self.tree.winfo_exists():
+                return
+            for _ in range(100):
+                try:
+                    kind, path = results.get_nowait()
+                except queue.Empty:
+                    break
+                if kind != 'path':
+                    count = len(self.tree.get_children())
+                    key = 'search_limit' if kind == 'limit' else 'search_error' if kind == 'error' else 'search_count'
+                    self.search_status.configure(text=t(key, count=count))
+                    return
+                self._insert('', str(path), path.relative_to(folder).as_posix(),
+                             'folder' if path.is_dir() else 'file')
+            self._search_after = self.root.after(60, receive)
+
+        threading.Thread(target=worker, daemon=True).start()
+        self._search_after = self.root.after(60, receive)
+        return 'break'
 
     # --- display filters --------------------------------------------------
     def ignore_patterns(self, filename='.cursorignore'):
@@ -582,6 +788,153 @@ class Explorer:
 
 
 
+    # --- skill chips (bottom, most-used first) ----------------------------
+    def _skill_detail(self, skill):
+        used = self.usage.get(skill['id'], 0)
+        head = f"{skill['id']}  ({skill['name']})" + (f"  ·  已用 {used} 次" if used else '')
+        body = ''
+        if skill.get('path'):
+            if skill['id'] not in self._body_cache:
+                self._body_cache[skill['id']] = read_skill_text(skill['path'], limit=500)
+            body = self._body_cache[skill['id']]
+        parts = [head, skill.get('description') or '', body, str(skill.get('path') or '')]
+        return '\n'.join(p for p in parts if p)
+
+    def _on_skills_configure(self, ev):
+        if abs(ev.width - self._skills_width) > 6:
+            self._skills_width = ev.width
+            if self._skills_after:
+                try:
+                    self.root.after_cancel(self._skills_after)
+                except tk.TclError:
+                    pass
+            self._skills_after = self.root.after(60, self._layout_skills)
+
+    def _layout_skills(self):
+        self._skills_after = None
+        self._build_skills()
+
+    def _cancel_skills_layout(self):
+        if self._skills_after:
+            self.root.after_cancel(self._skills_after)
+            self._skills_after = None
+
+    def _build_skills(self):
+        self._cancel_skills_layout()
+        if not self.skills_area or not self.skills_area.winfo_exists():
+            return
+        for child in self.skills_area.winfo_children():
+            child.destroy()
+        skills = list_open_skills(project_dir=self.folder, config_paths=self.skill_config_paths())
+        skills.sort(key=lambda s: (-self.usage.get(s['id'], 0), s['id'].casefold()))
+        self._skills = skills
+        if self.skills_header:
+            arrow = '▾' if self._skills_expanded else '▸'
+            self.skills_header.config(text=f"{arrow} {t('skills')} ({len(skills)})")
+        area_w = self.skills_area.winfo_width()
+        if area_w <= 1:
+            area_w = 320
+        row = None
+        x = 0
+        for index, skill in enumerate(skills):
+            text = self.labels.get(skill['id'], skill['name'])
+            width = max(46, len(text) * 8 + 18)
+            if row is None:
+                row = tk.Frame(self.skills_area, bg=config.BG)
+                row.pack(side='bottom', fill='x', anchor='w')
+                x = 0
+            elif self._skills_expanded and x + width > area_w:
+                row = tk.Frame(self.skills_area, bg=config.BG)
+                row.pack(side='bottom', fill='x', anchor='w')
+                x = 0
+            elif not self._skills_expanded and x + width > area_w:
+                break
+            top = index < 5
+            chip = tk.Label(row, text=text, bg=config.SEL if top else config.BTN,
+                            fg=config.SEL_FG if top else config.FG, padx=8, pady=3,
+                            font=config.ui_font(9), cursor='hand2')
+            chip.pack(side='left', padx=2, pady=2)
+            self._bind_chip(chip, skill)
+            x += width
+
+    def toggle_skills(self):
+        self._skills_expanded = not self._skills_expanded
+        self.settings['skills_expanded'] = self._skills_expanded
+        self.save()
+        self._build_skills()
+
+    def _bind_chip(self, chip, skill):
+        chip.bind('<ButtonPress-1>', lambda e, s=skill: self._chip_press(e, s))
+        chip.bind('<B1-Motion>', self._chip_motion)
+        chip.bind('<ButtonRelease-1>', self._chip_release)
+        chip.bind('<Button-3>', lambda e, s=skill: self._chip_menu(e, s))
+        self.tips.append(ToolTip(chip, self._skill_detail(skill)))
+
+    def _chip_press(self, ev, skill):
+        self._press_xy = (ev.x_root, ev.y_root)
+        self._drag_moved = False
+        self._chip_ref = skill
+        self._drag_items = [Path(skill['path'])] if skill.get('path') else None
+        self._drag_text = None
+        self._drag_event = 'skill_drag'
+        self._drag_active = bool(self._drag_items)
+        if self._drag_active:
+            self._start_watch()
+
+    def _chip_motion(self, ev):
+        pass
+
+    def _chip_release(self, ev):
+        skill = self._chip_ref
+        started = not self._drag_active
+        self._chip_ref = None
+        self._cancel_watch()
+        self._drag_items = None
+        self._drag_text = None
+        self._drag_active = False
+        if skill and not started and not self._drag_moved:
+            self.copy_text('@' + skill['id'])
+            self._bump_skill(skill['id'])
+            self.on_event('skill_copy')
+            self._build_skills()
+
+    def _chip_menu(self, ev, skill):
+        menu = tk.Menu(self.panel, tearoff=0)
+        menu.add_command(label=t('menu_copy_skill_ref', ref='@' + skill['id']),
+                         command=lambda s=skill: (self.copy_text('@' + s['id']),
+                                                  self._bump_skill(s['id']),
+                                                  self._build_skills()))
+        menu.add_command(label=t('menu_open_skill'),
+                         command=lambda s=skill: self._open_external(s['path']))
+        menu.add_command(label=t('menu_copy_skill_id', id=skill['id']),
+                         command=lambda s=skill: self.copy_text(s['id']))
+        menu.add_separator()
+        menu.add_command(label=t('skill_set_name'),
+                         command=lambda s=skill: self._set_skill_label(s))
+        menu.tk_popup(ev.x_root, ev.y_root)
+
+    def _set_skill_label(self, skill):
+        current = self.labels.get(skill['id'], skill['name'])
+        name = simpledialog.askstring(t('skill_set_name'), t('skill_name_prompt'),
+                                      initialvalue=current, parent=self.panel)
+        if name is None:
+            return
+        name = name.strip()
+        if name:
+            self.labels[skill['id']] = name
+        else:
+            self.labels.pop(skill['id'], None)
+        self.settings['skill_labels'] = self.labels
+        self.save()
+        self._build_skills()
+
+    def _bump_skill(self, skill_id):
+        if not skill_id:
+            return
+        self.usage[skill_id] = self.usage.get(skill_id, 0) + 1
+        self.settings['skill_usage'] = self.usage
+        self.save()
+
     # --- operations --------------------------------------------------------
     def new_folder(self):
         name = simpledialog.askstring(t('new_folder_title'), t('new_folder_prompt'), parent=self.panel)
@@ -612,6 +965,10 @@ class Explorer:
                 self.tree.item(item, open=not self.tree.item(item, 'open'))
             return
         if path.is_dir():
+            if self.search_var.get().strip():
+                self.search_var.set('')
+                self.set_folder(path)
+                return
             self._ensure_loaded(item)
             self.tree.item(item, open=not self.tree.item(item, 'open'))
         elif path.exists():
@@ -829,6 +1186,7 @@ class Explorer:
             self._watch_after = None
 
     def _cancel_watch(self):
+        self.on_file_drag(None)
         self._highlight_drop(None)
         self._highlight_root(None)
         self._hide_drag_preview()
@@ -968,6 +1326,8 @@ class Explorer:
         if not self._drag_moved:
             self._watch_after = self.tree.after(15, self._watch_external_drag)
             return
+        if self._drag_items:
+            self.on_file_drag((x, y))
         px, py = self.panel.winfo_rootx(), self.panel.winfo_rooty()
         pw, ph = self.panel.winfo_width(), self.panel.winfo_height()
         if not (px <= x <= px + pw and py <= y <= py + ph):
@@ -985,7 +1345,11 @@ class Explorer:
                 self.on_event(self._drag_event)
                 self._drag_event = None
             if items:
-                start_ole_drag(paths=[str(p) for p in items])
+                try:
+                    start_ole_drag(paths=[str(p) for p in items],
+                                   on_drag=self.on_file_drag)
+                finally:
+                    self.on_file_drag(None)
             elif text:
                 start_ole_drag(text=text)
             self.rebuild(preserve=True)

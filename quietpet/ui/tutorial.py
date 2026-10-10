@@ -5,7 +5,7 @@ from ..core import config, i18n
 
 
 def should_show(settings):
-    return config.TUTORIAL_TEST_MODE or not settings.get('tutorial_complete', False)
+    return False
 
 
 class Tutorial:
@@ -23,12 +23,16 @@ class Tutorial:
         self.render()
 
     def render(self):
-        if self.window is not None:
-            self.window.destroy()
-        window = self.window = tk.Toplevel(self.root)
-        window.withdraw()
-        window.overrideredirect(True)
-        window.attributes('-topmost', False)
+        # Reuse the bubble: destroying the active window on every Next click
+        # can activate another application and put the non-topmost cat behind it.
+        if self.window is None:
+            self.window = tk.Toplevel(self.root)
+            self.window.withdraw()
+            self.window.overrideredirect(True)
+            self.window.attributes('-topmost', False)
+        window = self.window
+        for child in window.winfo_children():
+            child.destroy()
         window.configure(bg=config.BTN_HOVER)
         body = tk.Frame(window, bg=config.BG, padx=12, pady=10)
         body.pack(padx=1, pady=1)
@@ -52,6 +56,11 @@ class Tutorial:
         window.update_idletasks()
         self.position()
         window.deiconify()
+        # Keep both windows visible for this user interaction, without pinning
+        # either above other applications after the user switches away.
+        self.root.deiconify()
+        self.root.lift()
+        window.lift(self.root)
 
     def next(self):
         if self.step + 1 == len(self.STEPS):
@@ -62,6 +71,8 @@ class Tutorial:
 
     def finish(self):
         self.close()
+        self.root.deiconify()
+        self.root.lift()
         self.settings['tutorial_complete'] = True
         self.save()
 
@@ -83,9 +94,9 @@ class Tutorial:
             return
         w, h = self.window.winfo_reqwidth(), self.window.winfo_reqheight()
         sw, sh = self.root.winfo_screenwidth(), self.root.winfo_screenheight()
-        x = max(0, min(self.root.winfo_x() + 40 - w // 2, sw - w))
+        x = max(0, min(self.root.winfo_x() + self.root.winfo_width() // 2 - w // 2, sw - w))
         y = self.root.winfo_y() - h - 6
         if y < 0:
-            y = self.root.winfo_y() + 98 + 6
+            y = self.root.winfo_y() + self.root.winfo_height() + 6
         y = max(0, min(y, sh - h))
         self.window.geometry(f'+{x}+{y}')
