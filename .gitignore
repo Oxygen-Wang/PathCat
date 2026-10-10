@@ -14,3 +14,6 @@ dist/
 # Portable git / archives downloaded locally
 MinGit*/
 *.zip
+
+# Source art pack (installed copies live under quietpet/assets/cat)
+QuietPet_Cat_States/

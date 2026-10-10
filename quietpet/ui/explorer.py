@@ -40,6 +40,8 @@ class Explorer:
         self._body_cache = {}
         self.loaded = set()
         self.clip = None
+        self.on_event = lambda name, ms=900: None
+        self._drag_event = None
 
         self.skills_area = None
         self.skills_header = None
@@ -330,6 +332,7 @@ class Explorer:
 
     def on_os_drop(self, paths):
         self._copy_paths([Path(p) for p in paths], self.target_dir())
+        self.on_event('file_in')
         self.rebuild(preserve=True)
 
     # --- tree model --------------------------------------------------------
@@ -606,6 +609,7 @@ class Explorer:
         self._chip_ref = skill
         self._drag_items = [Path(skill['path'])] if skill.get('path') else None
         self._drag_text = None
+        self._drag_event = 'skill_drag'
         self._drag_active = bool(self._drag_items)
         if self._drag_active:
             self._start_watch()
@@ -624,6 +628,7 @@ class Explorer:
         if skill and not started:
             self.copy_text('@' + skill['id'])
             self._bump_skill(skill['id'])
+            self.on_event('skill_copy')
             self._build_skills()
 
     def _chip_menu(self, ev, skill):
@@ -670,9 +675,11 @@ class Explorer:
             return
         try:
             (self.target_dir() / safe_name(name)).mkdir()
+            self.on_event('new')
             self.rebuild(preserve=True)
         except (ValueError, OSError) as exc:
             messagebox.showerror(t('err_create'), str(exc), parent=self.panel)
+            self.on_event('error')
 
     def import_files(self):
         names = filedialog.askopenfilenames(parent=self.panel, title=t('import_title'))
@@ -746,6 +753,8 @@ class Explorer:
                 shutil.move(str(p), str(unique_dest(trash, prefix + p.name)))
             except OSError as exc:
                 messagebox.showerror(t('err_move'), str(exc), parent=self.panel)
+                self.on_event('error')
+        self.on_event('delete')
         self.rebuild(preserve=True)
 
     # --- clipboard ---------------------------------------------------------
@@ -948,6 +957,7 @@ class Explorer:
         self._press_iid = iid
         self._drag_items = self.selected_paths() or None
         self._drag_text = None
+        self._drag_event = None
         if not self._drag_items:
             ref = self.refs.get(iid)
             if ref and ref.get('text'):
@@ -982,6 +992,9 @@ class Explorer:
                     widget.grab_release()
                 except tk.TclError:
                     pass
+            if self._drag_event:
+                self.on_event(self._drag_event)
+                self._drag_event = None
             if items:
                 start_ole_drag(paths=[str(p) for p in items])
             elif text:
@@ -1004,6 +1017,7 @@ class Explorer:
             ref = self.refs.get(iid)
             if ref and ref['kind'] == 'mcp':
                 self.copy_text(ref['text'])
+                self.on_event('mcp')
             return
         target = self.tree.identify_row(ev.y)
         dst = self.path_of(target)
@@ -1022,6 +1036,8 @@ class Explorer:
                     self._move_path(src, dst)
             except OSError as exc:
                 messagebox.showerror(t('err_operation'), str(exc), parent=self.panel)
+                self.on_event('error')
+        self.on_event('file_copy' if copy else 'file_move')
         self.rebuild(preserve=True)
 
     def _on_panel_drop(self, paths, copy, point):

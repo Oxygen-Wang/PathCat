@@ -39,7 +39,8 @@ class QuietPet:
 
         self.root.bind('<Escape>', lambda e: self.explorer.hide())
         self.pet.enable_drop()
-        self.explorer.on_visibility = lambda: self.root.after(30, self.dock_pet)
+        self.explorer.on_visibility = self.on_panel_visibility
+        self.explorer.on_event = self.pet.play
         self.start_hotkey()
 
         self._tick('hotkey', 150, self.poll_hotkey)
@@ -111,6 +112,12 @@ class QuietPet:
         else:
             self.explorer.panel.lift()
         self.dock_pet()
+
+    def on_panel_visibility(self):
+        visible = (self.explorer.panel and self.explorer.panel.winfo_exists()
+                   and self.explorer.panel.state() == 'normal')
+        self.pet.play('panel_open' if visible else 'panel_close', ms=700)
+        self.root.after(30, self.dock_pet)
 
     def _panel_visible(self):
         return bool(self.explorer.panel and self.explorer.panel.winfo_exists()
