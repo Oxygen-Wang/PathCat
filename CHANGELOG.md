@@ -4,6 +4,10 @@ All notable desktop changes are recorded here. Version numbers follow SemVer.
 
 ## [Unreleased]
 
+### Documentation
+
+- README 增加 AI 助手文件工作流的中英文介绍、使用场景与搜索关键词。
+
 ### Planned
 
 - 后台文件传输、进度与取消。

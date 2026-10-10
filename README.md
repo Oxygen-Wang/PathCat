@@ -1,10 +1,10 @@
-# 🐾 径猫 · PathCat
+# 🐾 径猫 · PathCat — AI 助手的文件好帮手
 
 ![PathCat 宣传插画：小猫陪你整理文件，让文件随手可达](docs/media/pathcat-cover.png)
 
 <div align="center">
 
-**养一只桌面小猫，让常用文件随手可达。**
+**Cursor、ChatGPT、DeepSeek 工作流里的文件好帮手。**
 
 把文件夹交给它。点一下，打开侧栏；拖一下，整理文件；再点一下，继续专注。
 
@@ -16,12 +16,26 @@
 
 **让文件随手可达 · Keep your files within reach.**
 
-径猫是一款 Windows 桌面文件侧栏，提供类似 Cursor、VS Code 的文件树与拖拽交互。
-将文件夹拖到小猫上即可打开路径，在多个目录之间切换、移动或复制文件。
+径猫是一款 Windows 桌面文件管理工具，帮助使用 **Cursor、ChatGPT、DeepSeek、Claude、Gemini、VS Code** 的你，把代码、文档、图片和参考资料放在手边。
+它提供类似 Cursor、VS Code 的文件树与拖拽交互：将文件夹拖到小猫上即可打开路径，在多个目录之间切换、移动或复制文件，让 AI 编程、写作与资料整理更顺手。
 
-PathCat is a lightweight Windows desktop file sidebar with a familiar file tree
-and drag-and-drop experience inspired by Cursor and VS Code. Drop a folder onto
-the cat to open it, switch between directories, and drag files to move or copy them.
+PathCat is a lightweight **Windows file manager and desktop file sidebar for AI workflows**.
+Keep source code, documents, images, and reference files within reach while working
+with **Cursor, ChatGPT, DeepSeek, Claude, Gemini, and VS Code**. Its familiar file
+explorer and drag-and-drop experience make it easy to open folders, switch paths,
+and move or copy files alongside AI coding assistants and chat tools.
+
+## 🤖 AI 助手的文件好帮手 / A file companion for AI assistants
+
+- **AI 编程 / AI coding**：将项目目录固定在侧栏，快速找到源码、配置和说明文档，方便与 Cursor、VS Code 等编辑器配合使用。
+- **AI 对话与写作 / AI chat and writing**：整理准备交给 ChatGPT、DeepSeek、Claude 或 Gemini 的文档、图片和参考资料，减少来回寻找文件的时间。
+- **文件拖放 / File drag and drop**：从文件树拖出本地文件，交给支持文件拖放或上传的编辑器、聊天窗口；具体接收方式取决于目标应用。
+- **多目录整理 / Multi-folder organization**：在项目、下载、素材和输出目录之间拖动文件，按住 **Ctrl** 复制，整理 AI 工作过程中使用和保存的文件。
+- **清爽文件树 / Clean file explorer**：按 `.gitignore`、`.cursorignore` 隐藏无关条目，让常用资料更容易找到。
+
+PathCat 是独立桌面软件，配合你已有的 AI 工具使用；文件上传由目标应用处理。
+
+**相关关键词 / Keywords**：AI 助手文件管理、AI 编程工具、桌面文件侧栏、文件夹拖拽、Windows 文件管理器、Cursor 工作流、ChatGPT 文件整理、DeepSeek 资料管理、AI assistant file manager、AI workflow、desktop sidebar、drag and drop、file explorer、productivity。
 
 ## 🎬 先看小猫怎么帮忙
 
