@@ -135,20 +135,24 @@ class QuietPet:
         pass
 
     def on_pet_drag(self):
-        """Live: dragging the cat resizes the sidebar width (cat on the inner edge)."""
-        if not self._panel_visible():
-            return
+        """Live: dragging the cat resizes the sidebar width and can switch sides."""
         self.root.update_idletasks()
         sw = self.root.winfo_screenwidth()
         cat_x = self.root.winfo_x()
         side = 'left' if (cat_x + 40) < sw // 2 else 'right'
         self.settings['panel_side'] = side
+        if not self._panel_visible():
+            return
         width = (sw - cat_x - 86) if side == 'right' else (cat_x - 6)
         width = max(260, min(width, max(260, sw - 80)))
         self.settings['panel_width'] = width
         self.explorer.position()
 
     def on_pet_moved(self):
+        self.root.update_idletasks()
+        sw = self.root.winfo_screenwidth()
+        cat_x = self.root.winfo_x()
+        self.settings['panel_side'] = 'left' if (cat_x + 40) < sw // 2 else 'right'
         self._snap_cat()
         self.save()
 
