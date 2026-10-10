@@ -1,9 +1,0 @@
-{
-  "name": "quietpet-local",
-  "plugins": [{
-    "name": "quietpet-codex",
-    "source": {"source": "local", "path": "./quietpet-codex"},
-    "policy": {"installation": "AVAILABLE", "authentication": "ON_USE"},
-    "category": "Productivity"
-  }]
-}

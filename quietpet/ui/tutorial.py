@@ -28,7 +28,7 @@ class Tutorial:
         window = self.window = tk.Toplevel(self.root)
         window.withdraw()
         window.overrideredirect(True)
-        window.attributes('-topmost', True)
+        window.attributes('-topmost', False)
         window.configure(bg=config.BTN_HOVER)
         body = tk.Frame(window, bg=config.BG, padx=12, pady=10)
         body.pack(padx=1, pady=1)

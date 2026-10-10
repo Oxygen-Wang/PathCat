@@ -1,25 +1,18 @@
 # -*- coding: utf-8 -*-
-"""QuietPet launcher.
-
-Runs the GUI by default, or the MCP stdio server with ``--mcp``:
-
-    python QuietPet.py
-    python QuietPet.py --mcp
-"""
-import sys
+"""Compatibility launcher for the PathCat desktop application."""
+import argparse
 
 
 def main():
-    if '--version' in sys.argv:
+    parser = argparse.ArgumentParser(description='PathCat desktop file sidebar')
+    parser.add_argument('--version', action='store_true', help='Print the desktop version')
+    args = parser.parse_args()
+    if args.version:
         from quietpet.core.config import APP, VERSION
         print(f'{APP} {VERSION}')
         return
-    if '--mcp' in sys.argv:
-        from quietpet.mcp import main as mcp_main
-        mcp_main()
-    else:
-        from quietpet.app import main as app_main
-        app_main()
+    from quietpet.app import main as app_main
+    app_main()
 
 
 if __name__ == '__main__':

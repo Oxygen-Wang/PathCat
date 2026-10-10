@@ -6,21 +6,20 @@ from pathlib import Path
 
 from ..core import config
 from ..core.i18n import t
-from ..opencode.status import read_opencode_status
-from ..native.win32 import force_top, install_drop_targets
+from ..native.win32 import install_drop_targets
 
 CAT_DIR = Path(__file__).resolve().parent.parent / 'assets' / 'cat'
 BASE_STATES = ('idle', 'working', 'waiting', 'offline')
 
 
 class Pet:
-    """Owns the borderless always-on-top cat window."""
+    """Owns the borderless cat window in the normal desktop window layer."""
 
     def __init__(self, root, settings):
         self.root = root
         self.settings = settings
-        self.status_kind = 'off'
-        self.status_label = t('status_off')
+        self.status_kind = 'idle'
+        self.status_label = t('status_idle')
         self.drop_targets = []
         self.drag_start = None
         self.was_dragged = False
@@ -45,7 +44,7 @@ class Pet:
         self._load_manifest()
 
         root.overrideredirect(True)
-        root.attributes('-topmost', True)
+        root.attributes('-topmost', False)
         root.configure(bg='#ff00ff')
         if config.IS_WIN:
             root.wm_attributes('-transparentcolor', '#ff00ff')
@@ -159,24 +158,11 @@ class Pet:
         self.canvas.delete('status')
 
     # --- status ------------------------------------------------------------
-    def refresh_status(self):
-        from ..integrations.codex import read_status
-        result = read_status() or read_opencode_status()
-        if result is None:
-            return
-        kind = result[0]
-        self.status_kind = kind
-        self.status_label = t('status_' + kind)
-        self.draw_status()
-        self.base_state = {'busy': 'working', 'wait': 'waiting', 'off': 'offline',
-                           'idle': 'idle'}.get(kind, 'idle')
-        if self.state in BASE_STATES:
-            self.set_state(self.base_state)
 
     # --- behaviour ---------------------------------------------------------
     def raise_pet(self):
         if self.root.winfo_exists():
-            force_top(self.root.winfo_id())
+            self.root.lift()
 
     def _enter(self, _ev=None):
         if not self.was_dragged and self.state not in ('dragging', 'dropped'):

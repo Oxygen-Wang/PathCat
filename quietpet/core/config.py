@@ -37,23 +37,6 @@ def ui_font(size=10, weight=None):
     result = ('Segoe UI', max(8, round(size * FONT_SIZE / 10)))
     return result + (weight,) if weight else result
 
-# opencode related locations
-GLOBAL_SKILL_SOURCES = [
-    HOME / '.codex' / 'skills',
-    HOME / '.claude' / 'skills',
-    HOME / '.agents' / 'skills',
-    HOME / '.config' / 'opencode' / 'skills',
-]
-PROJECT_SKILL_SUBDIRS = ['.codex/skills', '.claude/skills', '.agents/skills', '.opencode/skills']
-OC_CONFIG = HOME / '.config' / 'opencode' / 'opencode.json'
-OC_DB_CANDIDATES = [
-    HOME / '.local' / 'share' / 'opencode' / 'opencode.db',
-    Path(os.getenv('LOCALAPPDATA') or HOME) / 'opencode' / 'opencode.db',
-]
-
-# Local control channel used by the MCP bridge (localhost only).
-CONTROL_PORT = 8765
-
 # Palette (Cursor / VS Code dark sidebar feel)
 BG = '#1e1f22'
 FG = '#d4d6da'
@@ -74,10 +57,6 @@ def apply_theme(name):
 # Tree helpers
 TRASH = '.quietpet_trash'
 PLACEHOLDER = '::__qpph__'
-SEC_SKILLS = '__sec_skills__'
-SEC_MCP = '__sec_mcp__'
-SKILL_PREFIX = '__skill__::'
-MCP_PREFIX = '__mcp__::'
 
 STATUS_STYLES = {
     'busy': ('#f0a020', '工作中'),

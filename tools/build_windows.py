@@ -49,6 +49,9 @@ def main():
         zip_file.write(executable, 'PathCat.exe')
         for name in ('README.md', 'VERSION', 'CHANGELOG.md', 'THIRD_PARTY_NOTICES.md'):
             zip_file.write(ROOT / name, name)
+        for path in sorted((ROOT / 'docs/media').rglob('*')):
+            if path.is_file():
+                zip_file.write(path, path.relative_to(ROOT).as_posix())
         for path in sorted((ROOT / 'quietpet/_vendor').rglob('*')):
             if path.is_file() and '__pycache__' not in path.parts and path.suffix != '.pyc':
                 zip_file.write(path, path.relative_to(ROOT).as_posix())
