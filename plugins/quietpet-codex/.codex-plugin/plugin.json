@@ -1,0 +1,8 @@
+{
+  "name": "quietpet-codex",
+  "version": "0.4.0",
+  "description": "Local project files, drag-and-drop transfers, ignore rules and desktop companion; includes an experimental MCP Apps panel.",
+  "skills": "./skills/",
+  "mcpServers": "./.mcp.json",
+  "interface": {"displayName": "QuietPet", "shortDescription": "桌宠、项目文件与任务状态联动"}
+}

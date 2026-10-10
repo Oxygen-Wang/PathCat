@@ -1,5 +1,6 @@
 # Byte-compiled / cache
 __pycache__/
+.test-tmp/
 *.py[cod]
 *$py.class
 
@@ -17,3 +18,18 @@ MinGit*/
 
 # Source art pack (installed copies live under quietpet/assets/cat)
 QuietPet_Cat_States/
+
+# Local machine settings, credentials and generated plugin configuration
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+settings.json
+error.log
+/plugins/quietpet-codex/.mcp.json
+.venv/
+.pytest_cache/
+
+# Local files imported while exercising desktop drag-and-drop
+/02/

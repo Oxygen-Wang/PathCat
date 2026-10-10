@@ -48,9 +48,9 @@ class TestHotkey(unittest.TestCase):
         self.assertTrue(hotkey.is_tap_gesture('Alt'))
         self.assertIsNone(hotkey.tap_gesture('Ctrl+Alt+Q'))
 
-    def test_default_hotkey_is_tap(self):
+    def test_default_hotkey_is_ctrl_b(self):
         from quietpet.core import config
-        self.assertTrue(hotkey.is_tap_gesture(config.DEFAULT_HOTKEY))
+        self.assertEqual(hotkey.parse_hotkey(config.DEFAULT_HOTKEY), (hotkey.MOD_CONTROL, ord('B')))
 
     def test_global_hotkey_shift_mode(self):
         gh = hotkey.GlobalHotkey('Shift', None)

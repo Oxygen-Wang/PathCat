@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """The file explorer sidebar: lazy tree, skill chips, clipboard, drag/copy/move."""
 import os
+import time
 import shutil
 import subprocess
 import sys
@@ -13,9 +14,12 @@ from ..core.i18n import t
 from .icons import load_icons
 from ..opencode.status import list_open_skills, read_mcp_servers, read_skill_text
 from ..core.util import safe_name, unique_dest
+from ..core.ignore import (project_ignored, read_ignore_lines, write_ignore_lines,
+                           transfer_allowed, top_level_paths, escape_pattern)
 from .widgets import ToolTip
 from ..native.win32 import (force_top, get_cursor_pos, install_drop_targets,
                             left_button_down, register_drop_target, start_ole_drag)
+from ..native.win32 import revoke_drop_target
 
 CAT_W = 80          # cat window width
 CAT_GAP = 6
@@ -42,6 +46,17 @@ class Explorer:
         self.clip = None
         self.on_event = lambda name, ms=900: None
         self._drag_event = None
+        self._press_xy = None
+        self._drag_moved = False
+        self._drag_hover = None
+        self._drag_hover_since = 0
+        self._drag_scroll_at = 0
+        self._root_chips = {}
+        self._root_style_key = None
+        self._drag_root = None
+        self._drag_root_since = 0
+        self._drag_preview = None
+        self.show_ignored = False
 
         self.skills_area = None
         self.skills_header = None
@@ -89,6 +104,32 @@ class Explorer:
         else:
             self.show()
 
+    def recreate(self):
+        """Rebuild theme/language without reopening a hidden panel or losing selection."""
+        if not self.panel or not self.panel.winfo_exists():
+            return
+        visible = self.panel.state() == 'normal'
+        opened = self._opened_paths()
+        selected = self.tree.selection()
+        self._cancel_watch()
+        self._hide_row_tip()
+        for tip in self.tips:
+            tip._hide()
+        if self._skills_after and self.skills_area:
+            self.skills_area.after_cancel(self._skills_after)
+            self._skills_after = None
+        revoke_drop_target(self.panel.winfo_id())
+        revoke_drop_target(self.tree.winfo_id())
+        self.panel.destroy()
+        self.panel = None
+        self.tree = None
+        self.show()
+        for path in sorted(opened, key=len):
+            self._expand_to(path)
+        self.tree.selection_set([iid for iid in selected if self.tree.exists(iid)])
+        if not visible:
+            self.hide()
+
     def show(self):
         if self.panel and self.panel.winfo_exists():
             self.panel.deiconify()
@@ -105,7 +146,7 @@ class Explorer:
         w.overrideredirect(True)
         w.attributes('-topmost', True)
         w.protocol('WM_DELETE_WINDOW', self.hide)
-        self.icons = load_icons(master=self.root, size=16, color='#cfd3da')
+        self.icons = load_icons(master=self.root, size=16, color=config.FG)
         self.tips = []
 
         self.inner = tk.Frame(w, bg=config.BG)
@@ -128,12 +169,14 @@ class Explorer:
                 ('refresh', '↻', 'tip_refresh', lambda: self.rebuild(preserve=True))]:
             self._icon_button(toolbar, icon_name, fallback, cb, tip=t(tip)).pack(side='left', padx=2)
         self.toggle_btn = tk.Button(toolbar, text='⊞', command=self.toggle_expand,
-                                    bg=config.BTN, fg='#e2e2e4', activebackground=config.BTN_HOVER,
-                                    activeforeground='white', relief='flat', borderwidth=0,
-                                    padx=8, pady=3, cursor='hand2', font=('Segoe UI', 11),
+                                    bg=config.BTN, fg=config.FG, activebackground=config.BTN_HOVER,
+                                    activeforeground=config.FG, relief='flat', borderwidth=0,
+                                    padx=8, pady=3, cursor='hand2', font=config.ui_font(11),
                                     highlightthickness=0)
         self.toggle_btn.pack(side='left', padx=2)
         self.tips.append(ToolTip(self.toggle_btn, t('tip_expand_all')))
+        self._button(toolbar, '⚙', self.edit_ignore, small=True,
+                     tip=t('ignore_title')).pack(side='left', padx=2)
 
         style = ttk.Style(w)
         try:
@@ -141,13 +184,14 @@ class Explorer:
         except tk.TclError:
             pass
         style.configure('Quiet.Treeview', background=config.BG, fieldbackground=config.BG,
-                        foreground=config.FG, borderwidth=0, rowheight=27, font=('Segoe UI', 10))
+                        foreground=config.FG, borderwidth=0, rowheight=max(27, config.FONT_SIZE * 2 + 8), font=config.ui_font(10))
         style.map('Quiet.Treeview', background=[('selected', config.SEL)],
-                  foreground=[('selected', '#ffffff')])
+                  foreground=[('selected', config.SEL_FG)])
 
         body = tk.Frame(self.inner, bg=config.BG)
         tree = ttk.Treeview(body, show='tree', style='Quiet.Treeview', selectmode='extended')
         self.tree = tree
+        tree.tag_configure('drop_target', background=config.DROP_BG)
         bar = ttk.Scrollbar(body, orient='vertical', command=tree.yview)
         tree.configure(yscrollcommand=bar.set)
         tree.pack(side='left', fill='both', expand=True)
@@ -156,6 +200,7 @@ class Explorer:
         tree.bind('<Button-3>', self.context_menu)
         tree.bind('<ButtonPress-1>', self.drag_start)
         tree.bind('<ButtonRelease-1>', self.drag_end)
+        tree.bind('<Escape>', self.cancel_drag)
         tree.bind('<<TreeviewOpen>>', self.on_open)
         tree.bind('<Control-c>', lambda e: self.copy_selection())
         tree.bind('<Control-x>', lambda e: self.cut_selection())
@@ -166,7 +211,7 @@ class Explorer:
         tree.bind('<Leave>', lambda e: self._hide_row_tip(), add='+')
 
         footer = tk.Label(self.inner, text=t('footer'),
-                          bg=config.BG, fg=config.MUTED, font=('Segoe UI', 9), anchor='w')
+                          bg=config.BG, fg=config.MUTED, font=config.ui_font(9), anchor='w')
         footer.pack(side='bottom', fill='x', padx=14, pady=10)
 
         # Skills dock at the bottom and fill from bottom to top.
@@ -176,7 +221,7 @@ class Explorer:
         skills_head = tk.Frame(self.inner, bg=config.BG)
         skills_head.pack(side='bottom', fill='x', padx=12, pady=(0, 2))
         self.skills_header = tk.Label(skills_head, text='', bg=config.BG, fg=config.MUTED,
-                                      font=('Segoe UI', 8, 'bold'), anchor='w', cursor='hand2')
+                                      font=config.ui_font(8, 'bold'), anchor='w', cursor='hand2')
         self.skills_header.pack(side='left')
         self.skills_header.bind('<Button-1>', lambda e: self.toggle_skills())
 
@@ -225,7 +270,7 @@ class Explorer:
     def update_labels(self):
         name = self.folder.name or str(self.folder)
         if self.panel and self.panel.winfo_exists():
-            self.panel.title(f'QuietPet · {name}')
+            self.panel.title(f'{config.APP} · {name}')
         if self.roots_bar is not None and self.roots_bar.winfo_exists():
             self._build_roots_bar()
 
@@ -233,32 +278,35 @@ class Explorer:
         for child in self.roots_bar.winfo_children():
             child.destroy()
         active = str(self.folder)
+        self._root_chips = {}
+        self._root_style_key = None
         for root in self.roots:
             selected = str(Path(root)) == active
             bg = config.SEL if selected else config.BTN
             chip = tk.Frame(self.roots_bar, bg=bg)
             name = Path(root).name or str(root)
-            label = tk.Label(chip, text=name, bg=bg, fg='#e8eaed', padx=7, pady=2,
-                             font=('Segoe UI', 9), cursor='hand2')
+            label = tk.Label(chip, text=name, bg=bg, fg=config.SEL_FG if selected else config.FG, padx=7, pady=2,
+                             font=config.ui_font(9), cursor='hand2')
             label.pack(side='left')
             close = tk.Label(chip, text='×', bg=bg, fg=config.MUTED, padx=2, pady=2,
-                             font=('Segoe UI', 9), cursor='hand2')
+                             font=config.ui_font(9), cursor='hand2')
             close.pack(side='left')
             label.bind('<Button-1>', lambda e, r=root: self.set_folder(r))
             close.bind('<Button-1>', lambda e, r=root: self.remove_root(r))
             chip.pack(side='left', padx=2)
+            self._root_chips[str(root)] = chip
             self.tips.append(ToolTip(chip, str(root)))
-        add = tk.Label(self.roots_bar, text='＋', bg=config.BTN, fg='#e8eaed', padx=7, pady=2,
-                       font=('Segoe UI', 10, 'bold'), cursor='hand2')
+        add = tk.Label(self.roots_bar, text='＋', bg=config.BTN, fg=config.FG, padx=7, pady=2,
+                       font=config.ui_font(10, 'bold'), cursor='hand2')
         add.pack(side='left', padx=2)
         add.bind('<Button-1>', lambda e: self.add_root())
         self.tips.append(ToolTip(add, t('add_path')))
 
     def _button(self, parent, label, command, small=False, tip=None):
-        btn = tk.Button(parent, text=label, command=command, bg=config.BTN, fg='#e2e2e4',
-                        activebackground=config.BTN_HOVER, activeforeground='white', relief='flat',
+        btn = tk.Button(parent, text=label, command=command, bg=config.BTN, fg=config.FG,
+                        activebackground=config.BTN_HOVER, activeforeground=config.FG, relief='flat',
                         padx=6 if small else 8, pady=3 if small else 5, cursor='hand2',
-                        borderwidth=0, font=('Segoe UI', 9), highlightthickness=0)
+                        borderwidth=0, font=config.ui_font(9), highlightthickness=0)
         if tip:
             self.tips.append(ToolTip(btn, tip))
         return btn
@@ -384,7 +432,8 @@ class Explorer:
 
     def _populate(self, parent_id, directory):
         try:
-            entries = [p for p in directory.iterdir() if p.name != config.TRASH]
+            entries = [p for p in directory.iterdir() if p.name != config.TRASH and
+                       (self.show_ignored or not project_ignored(p, self.folder))]
         except (OSError, PermissionError):
             return
         entries.sort(key=lambda p: (not p.is_dir(), p.name.casefold()))
@@ -480,9 +529,68 @@ class Explorer:
                     self.tree.item(path, open=True)
             except OSError:
                 continue
-        if selected and self.tree.exists(selected[0]):
+        selected = [iid for iid in selected if self.tree.exists(iid)]
+        if selected:
             self.tree.selection_set(selected)
         self._build_skills()
+
+    # --- display filters --------------------------------------------------
+    def ignore_patterns(self, filename='.cursorignore'):
+        return read_ignore_lines(self.folder, filename)
+
+    def set_ignore_patterns(self, patterns, filename='.cursorignore'):
+        write_ignore_lines(self.folder, patterns, filename)
+        self.rebuild(preserve=True)
+
+    def ignore_selection(self):
+        patterns = list(self.ignore_patterns())
+        for path in self.selected_paths():
+            try:
+                relative = path.absolute().relative_to(self.folder.absolute()).as_posix()
+            except ValueError:
+                continue
+            patterns.append('/' + escape_pattern(relative) + ('/' if path.is_dir() else ''))
+        self.set_ignore_patterns(patterns)
+
+    def toggle_ignored(self):
+        self.show_ignored = not self.show_ignored
+        self.rebuild(preserve=True)
+
+    def edit_ignore(self):
+        folder = self.folder
+        dialog = tk.Toplevel(self.panel)
+        dialog.title(t('ignore_title'))
+        dialog.configure(bg=config.BG)
+        dialog.transient(self.panel)
+        tk.Label(dialog, text=t('ignore_help'), bg=config.BG, fg=config.FG,
+                 justify='left', wraplength=440).pack(padx=12, pady=10)
+        editor = tk.Text(dialog, width=52, height=14, bg=config.BTN, fg=config.FG,
+                         insertbackground=config.FG)
+        editor.pack(padx=12, pady=4)
+        source = tk.StringVar(value='.cursorignore')
+        chooser = ttk.Combobox(dialog, textvariable=source,
+                               values=('.cursorignore', '.gitignore'), state='readonly')
+        chooser.pack(padx=12, pady=4)
+        def load_rules(_event=None):
+            editor.delete('1.0', 'end')
+            editor.insert('1.0', '\n'.join(self.ignore_patterns(source.get())))
+        chooser.bind('<<ComboboxSelected>>', load_rules)
+        load_rules()
+        buttons = tk.Frame(dialog, bg=config.BG)
+        buttons.pack(fill='x', padx=12, pady=10)
+        def apply():
+            if self.folder != folder:
+                dialog.destroy()
+                return
+            try:
+                self.set_ignore_patterns(editor.get('1.0', 'end-1c').splitlines(), source.get())
+            except (ValueError, OSError) as error:
+                messagebox.showerror(t('ignore_title'), str(error), parent=dialog)
+                return
+            dialog.destroy()
+        self._button(buttons, t('ignore_save'), apply).pack(side='right')
+        dialog.grab_set()
+        editor.focus_set()
 
     def collapse_all(self):
         for item in self.tree.get_children():
@@ -586,8 +694,8 @@ class Explorer:
                 break
             top = index < 5
             chip = tk.Label(row, text=text, bg=config.SEL if top else config.BTN,
-                            fg='#ffffff' if top else '#e6e8eb', padx=8, pady=3,
-                            font=('Segoe UI', 9), cursor='hand2')
+                            fg=config.SEL_FG if top else config.FG, padx=8, pady=3,
+                            font=config.ui_font(9), cursor='hand2')
             chip.pack(side='left', padx=2, pady=2)
             self._bind_chip(chip, skill)
             x += width
@@ -606,6 +714,8 @@ class Explorer:
         self.tips.append(ToolTip(chip, self._skill_detail(skill)))
 
     def _chip_press(self, ev, skill):
+        self._press_xy = (ev.x_root, ev.y_root)
+        self._drag_moved = False
         self._chip_ref = skill
         self._drag_items = [Path(skill['path'])] if skill.get('path') else None
         self._drag_text = None
@@ -803,23 +913,28 @@ class Explorer:
 
     def _copy_path(self, src, dest_dir):
         src, dest_dir = Path(src), Path(dest_dir)
+        if src.is_dir() and (src.resolve() == dest_dir.resolve() or
+                             src.resolve() in dest_dir.resolve().parents):
+            return
         dest = unique_dest(dest_dir, src.name)
         if src.is_dir():
             shutil.copytree(src, dest)
         else:
             shutil.copy2(src, dest)
+        return dest
 
     def _move_path(self, src, dest_dir):
         src, dest_dir = Path(src), Path(dest_dir)
-        if src.resolve().parent == dest_dir.resolve():
+        if not transfer_allowed(src, dest_dir):
             return
         dest = dest_dir / src.name
         if dest.exists():
             dest = unique_dest(dest_dir, src.name)
         shutil.move(str(src), str(dest))
+        return dest
 
     def _copy_paths(self, paths, dest_dir):
-        for src in paths:
+        for src in top_level_paths(paths):
             try:
                 if src.exists():
                     self._copy_path(src, dest_dir)
@@ -872,7 +987,7 @@ class Explorer:
             tip.attributes('-topmost', True)
         except tk.TclError:
             pass
-        tk.Label(tip, text=text, bg='#2b2d31', fg='#e6e8eb', font=('Segoe UI', 9),
+        tk.Label(tip, text=text, bg=config.BTN, fg=config.FG, font=config.ui_font(9),
                  justify='left', padx=8, pady=4, wraplength=460, bd=0).pack()
         tip.geometry(f'+{x}+{y}')
         self._row_tip = tip
@@ -902,6 +1017,9 @@ class Explorer:
         menu = tk.Menu(self.panel, tearoff=0)
         menu.add_command(label=t('menu_open_folder'), command=self.choose_folder)
         menu.add_command(label=t('menu_new_subfolder'), command=self.new_folder)
+        menu.add_command(label=t('ignore_title'), command=self.edit_ignore)
+        menu.add_command(label=t('ignore_hide' if self.show_ignored else 'ignore_show'),
+                         command=self.toggle_ignored)
         menu.add_separator()
         menu.add_command(label=t('menu_copy'), command=self.copy_selection)
         menu.add_command(label=t('menu_cut'), command=self.cut_selection)
@@ -926,6 +1044,7 @@ class Explorer:
             menu.add_separator()
             menu.add_command(label=t('menu_open'), command=lambda: self.activate(iid))
             menu.add_command(label=t('menu_copy_path'), command=self.copy_path_text)
+            menu.add_command(label=t('ignore_selected'), command=self.ignore_selection)
             menu.add_command(label=t('menu_rename'), command=self.rename)
             menu.add_command(label=t('menu_trash'), command=self.soft_delete)
             menu.add_command(label=t('menu_reveal'),
@@ -941,6 +1060,9 @@ class Explorer:
             self._watch_after = None
 
     def _cancel_watch(self):
+        self._highlight_drop(None)
+        self._highlight_root(None)
+        self._hide_drag_preview()
         if self._watch_after:
             try:
                 self.tree.after_cancel(self._watch_after)
@@ -948,14 +1070,110 @@ class Explorer:
                 pass
             self._watch_after = None
 
+    def _managed_path(self, path):
+        """Include every added path, even after hover switches the active tree."""
+        resolved = Path(path).resolve()
+        roots = getattr(self, 'roots', [str(self.folder)])
+        return any(resolved == Path(r).resolve() or Path(r).resolve() in resolved.parents
+                   for r in roots)
+
+    def _root_at(self, x, y):
+        for path, chip in self._root_chips.items():
+            if chip.winfo_exists() and (chip.winfo_rootx() <= x < chip.winfo_rootx() + chip.winfo_width()
+                    and chip.winfo_rooty() <= y < chip.winfo_rooty() + chip.winfo_height()):
+                return Path(path)
+        return None
+
+    def _drop_destination(self, x, y):
+        tab = self._root_at(x, y)
+        if tab is not None:
+            return tab
+        tx, ty = x - self.tree.winfo_rootx(), y - self.tree.winfo_rooty()
+        if not (0 <= tx < self.tree.winfo_width() and 0 <= ty < self.tree.winfo_height()):
+            return None
+        iid = self.tree.identify_row(ty)
+        if not iid:
+            return self.folder
+        path = self.path_of(iid)
+        if path is None:
+            return None
+        return path if path.is_dir() else path.parent
+
+    def _highlight_root(self, path):
+        key = str(path) if path is not None else None
+        if key != self._drag_root:
+            self._drag_root = key
+            self._drag_root_since = time.monotonic()
+        style_key = (key, str(self.folder))
+        if style_key == self._root_style_key:
+            return
+        self._root_style_key = style_key
+        for root, chip in self._root_chips.items():
+            bg = config.DROP_BG if root == key else config.SEL if root == str(self.folder) else config.BTN
+            if chip.winfo_exists():
+                chip.configure(bg=bg)
+                for label in chip.winfo_children():
+                    label.configure(bg=bg)
+
+    def _hide_drag_preview(self):
+        if self._drag_preview is not None:
+            self._drag_preview.destroy()
+            self._drag_preview = None
+
+    def _show_drag_preview(self, x, y, destination):
+        from ..native.win32 import control_button_down
+        if self._drag_preview is None:
+            tip = self._drag_preview = tk.Toplevel(self.panel)
+            tip.overrideredirect(True)
+            tip.attributes('-topmost', True)
+            label = tk.Label(tip, bg=config.BTN, fg=config.FG, padx=8, pady=5,
+                             font=config.ui_font(9), justify='left')
+            label.pack()
+        label = self._drag_preview.winfo_children()[0]
+        valid = destination is not None and any(transfer_allowed(p, destination) for p in self._drag_items)
+        text = t('drag_copy' if control_button_down() else 'drag_move', count=len(self._drag_items))
+        text += '\n' + (str(destination) if valid else t('drag_invalid'))
+        if label.cget('text') != text:
+            label.configure(text=text, wraplength=240)
+            self._drag_preview.update_idletasks()
+        w, h = self._drag_preview.winfo_reqwidth(), self._drag_preview.winfo_reqheight()
+        px = min(x + 18, self.root.winfo_screenwidth() - w)
+        py = min(y + 22, self.root.winfo_screenheight() - h)
+        # When the right edge clamps the preview, put it left of the pointer
+        # so it never covers the destination under the mouse.
+        if px <= x < px + w:
+            px = x - w - 18
+        self._drag_preview.geometry(f'+{max(0, px)}+{max(0, py)}')
+
+    def cancel_drag(self, _event=None):
+        if not self._drag_active:
+            return
+        self._drag_active = False
+        self._drag_items = self._drag_text = None
+        self._cancel_watch()
+        return 'break'
+
+    def _highlight_drop(self, iid):
+        if self._drag_hover == iid:
+            return
+        if self._drag_hover and self.tree.exists(self._drag_hover):
+            tags = tuple(t for t in self.tree.item(self._drag_hover, 'tags') if t != 'drop_target')
+            self.tree.item(self._drag_hover, tags=tags)
+        self._drag_hover = iid
+        self._drag_hover_since = time.monotonic()
+        if iid and self.tree.exists(iid):
+            self.tree.item(iid, tags=tuple(self.tree.item(iid, 'tags')) + ('drop_target',))
+
     def drag_start(self, ev):
+        self._press_xy = (ev.x_root, ev.y_root)
+        self._drag_moved = False
         iid = self.tree.identify_row(ev.y)
         if iid and iid.endswith(config.PLACEHOLDER):
             iid = None
         if iid and iid not in self.tree.selection():
             self.tree.selection_set(iid)
         self._press_iid = iid
-        self._drag_items = self.selected_paths() or None
+        self._drag_items = top_level_paths(self.selected_paths()) if iid else None
         self._drag_text = None
         self._drag_event = None
         if not self._drag_items:
@@ -977,13 +1195,19 @@ class Explorer:
         if not self._drag_active:
             return
         if not left_button_down():
-            self._drag_active = False
+            self._cancel_watch()
             return
         x, y = get_cursor_pos()
+        if self._press_xy and max(abs(x - self._press_xy[0]), abs(y - self._press_xy[1])) >= 6:
+            self._drag_moved = True
+        if not self._drag_moved:
+            self._watch_after = self.tree.after(15, self._watch_external_drag)
+            return
         px, py = self.panel.winfo_rootx(), self.panel.winfo_rooty()
         pw, ph = self.panel.winfo_width(), self.panel.winfo_height()
         if not (px <= x <= px + pw and py <= y <= py + ph):
             items, text = self._drag_items, self._drag_text
+            self._cancel_watch()
             self._drag_active = False
             self._drag_items = None
             self._drag_text = None
@@ -999,10 +1223,43 @@ class Explorer:
                 start_ole_drag(paths=[str(p) for p in items])
             elif text:
                 start_ole_drag(text=text)
+            self.rebuild(preserve=True)
             return
+        if self._drag_items and self._drag_event != 'skill_drag':
+            self._hide_row_tip()
+            tab = self._root_at(x, y)
+            self._highlight_root(tab)
+            if tab is not None and str(tab) != str(self.folder) and time.monotonic() - self._drag_root_since >= 0.45:
+                self._highlight_drop(None)
+                self.set_folder(tab)
+                self.panel.update_idletasks()
+                self._highlight_root(tab)
+            self._show_drag_preview(x, y, self._drop_destination(x, y))
+            tx, ty = x - self.tree.winfo_rootx(), y - self.tree.winfo_rooty()
+            height = self.tree.winfo_height()
+            if 0 <= tx < self.tree.winfo_width() and 0 <= ty < height:
+                now = time.monotonic()
+                if now - self._drag_scroll_at > 0.12:
+                    if ty < 24:
+                        self.tree.yview_scroll(-1, 'units')
+                    elif ty > height - 24:
+                        self.tree.yview_scroll(1, 'units')
+                    self._drag_scroll_at = now
+                iid = self.tree.identify_row(ty)
+                dst = self.path_of(iid)
+                valid = dst is not None and dst.is_dir() and self.inside(dst) and any(
+                    transfer_allowed(p, dst) for p in self._drag_items)
+                self._highlight_drop(iid if valid else None)
+                if valid and now - self._drag_hover_since >= 0.65:
+                    self._ensure_loaded(iid)
+                    self.tree.item(iid, open=True)
+            else:
+                self._highlight_drop(None)
         self._watch_after = self.tree.after(15, self._watch_external_drag)
 
     def drag_end(self, ev):
+        moved = self._drag_moved or (self._press_xy is not None and max(
+            abs(ev.x_root - self._press_xy[0]), abs(ev.y_root - self._press_xy[1])) >= 6)
         self._cancel_watch()
         items = self._drag_items
         started = not self._drag_active      # the watchdog handed off to OLE
@@ -1019,41 +1276,46 @@ class Explorer:
                 self.copy_text(ref['text'])
                 self.on_event('mcp')
             return
-        target = self.tree.identify_row(ev.y)
-        dst = self.path_of(target)
-        if dst is None or not dst.is_dir() or not self.inside(dst):
+        if not moved:
+            return
+        dst = self._drop_destination(ev.x_root, ev.y_root)
+        if dst is None or not dst.is_dir() or not self._managed_path(dst):
             return
         copy = bool(ev.state & 0x0004)
+        transferred = []
         for src in items:
-            if not src.exists() or not self.inside(src):
+            if not src.exists() or not self._managed_path(src):
                 continue
-            if src == dst or src in dst.parents or src.parent == dst:
+            if not transfer_allowed(src, dst):
                 continue
             try:
                 if copy:
-                    self._copy_path(src, dst)
+                    transferred.append(self._copy_path(src, dst))
                 else:
-                    self._move_path(src, dst)
+                    transferred.append(self._move_path(src, dst))
             except OSError as exc:
                 messagebox.showerror(t('err_operation'), str(exc), parent=self.panel)
                 self.on_event('error')
+        if not transferred:
+            return
         self.on_event('file_copy' if copy else 'file_move')
+        if self._root_at(ev.x_root, ev.y_root) is not None and dst != self.folder:
+            self.set_folder(dst)
         self.rebuild(preserve=True)
+        for path in transferred:
+            if path is not None and self.inside(path):
+                self._expand_to(str(path))
+        self.tree.selection_set([str(path) for path in transferred if path is not None and self.tree.exists(str(path))])
 
     def _on_panel_drop(self, paths, copy, point):
-        try:
-            y = point[1] - self.tree.winfo_rooty()
-        except tk.TclError:
-            y = -1
-        dst = self.path_of(self.tree.identify_row(max(0, y)))
-        if dst is None or not dst.is_dir():
-            dst = self.folder
-        for raw in paths:
-            src = Path(raw)
+        dst = self._drop_destination(*point)
+        if dst is None or not self._managed_path(dst):
+            return
+        for src in top_level_paths(paths):
             if not src.exists():
                 continue
-            internal = self.inside(src)
-            if internal and (src == dst or dst in src.parents or (src.is_dir() and src.parent == dst)):
+            internal = self._managed_path(src)
+            if not transfer_allowed(src, dst):
                 continue
             try:
                 if internal and not copy:

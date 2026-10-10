@@ -20,6 +20,9 @@ if IS_WIN:
     _ole32 = ctypes.windll.ole32
     _kernel32 = ctypes.windll.kernel32
 
+    def control_button_down():
+        return bool(_user32.GetAsyncKeyState(0x11) & 0x8000)
+
     LRESULT = ctypes.c_ssize_t
     HRESULT = ctypes.c_long
     WNDPROC = ctypes.WINFUNCTYPE(LRESULT, wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM)
@@ -584,6 +587,12 @@ if IS_WIN:
         peffect[0] = DROPEFFECT_COPY if copy else DROPEFFECT_MOVE
         return S_OK
 
+    def revoke_drop_target(hwnd):
+        try:
+            _ole32.RevokeDragDrop(int(hwnd))
+        except Exception:
+            pass
+
     def register_drop_target(hwnd, callback):
         """Register an OLE IDropTarget on a Tk widget so it accepts drags."""
         global _target_ref, _target_cb
@@ -601,6 +610,11 @@ if IS_WIN:
             return False
 
 else:  # pragma: no cover - non-Windows fallback
+    def control_button_down():
+        return False
+    def revoke_drop_target(hwnd):
+        pass
+
     def force_top(hwnd):
         pass
 

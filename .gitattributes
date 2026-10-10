@@ -1,0 +1,12 @@
+* text=auto eol=lf
+*.py text eol=lf
+*.md text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.json text eol=lf
+*.txt text eol=lf
+VERSION text eol=lf
+*.bat text eol=crlf
+*.png binary
+# Preserve the third-party source and license verbatim, including whitespace.
+quietpet/_vendor/** -whitespace

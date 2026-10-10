@@ -6,27 +6,45 @@ import sys
 from pathlib import Path
 
 IS_WIN = sys.platform == 'win32'
-APP = 'QuietPet'
-VERSION = '0.1.0'
+APP = 'PathCat'
+VERSION = (Path(__file__).resolve().parents[2] / 'VERSION').read_text(encoding='utf-8').strip()
 
 HOME = Path(os.getenv('USERPROFILE') or Path.home())
-DATA = Path(os.getenv('APPDATA') or HOME) / APP
+# Preserve existing preferences when upgrading from the QuietPet name.
+DATA = Path(os.getenv('APPDATA') or HOME) / 'QuietPet'
 DATA.mkdir(parents=True, exist_ok=True)
 PREFS = DATA / 'settings.json'
 DEFAULT_FOLDER = HOME / 'Documents' / APP
 
-# Default summon gesture: double-tap the Alt key. Can be changed to any key
-# combination (e.g. "Ctrl+Alt+Q") or another double-tap (Ctrl/Shift/Win) from
-# the pet's right-click menu.
-DEFAULT_HOTKEY = 'Alt'
+# Default summon shortcut. Other combinations or double-tap gestures can be
+# selected from the pet's right-click menu.
+DEFAULT_HOTKEY = 'Ctrl+B'
+FONT_SIZE = 10
+# Preview builds replay onboarding on each launch. Release builds set False.
+TUTORIAL_TEST_MODE = '-' in VERSION
+
+
+def apply_font_size(value):
+    global FONT_SIZE
+    try:
+        FONT_SIZE = max(8, min(20, int(value)))
+    except (TypeError, ValueError):
+        FONT_SIZE = 10
+    return FONT_SIZE
+
+
+def ui_font(size=10, weight=None):
+    result = ('Segoe UI', max(8, round(size * FONT_SIZE / 10)))
+    return result + (weight,) if weight else result
 
 # opencode related locations
 GLOBAL_SKILL_SOURCES = [
+    HOME / '.codex' / 'skills',
     HOME / '.claude' / 'skills',
     HOME / '.agents' / 'skills',
     HOME / '.config' / 'opencode' / 'skills',
 ]
-PROJECT_SKILL_SUBDIRS = ['.claude/skills', '.agents/skills', '.opencode/skills']
+PROJECT_SKILL_SUBDIRS = ['.codex/skills', '.claude/skills', '.agents/skills', '.opencode/skills']
 OC_CONFIG = HOME / '.config' / 'opencode' / 'opencode.json'
 OC_DB_CANDIDATES = [
     HOME / '.local' / 'share' / 'opencode' / 'opencode.db',
@@ -43,6 +61,15 @@ MUTED = '#8a8f98'
 BTN = '#2a2c31'
 BTN_HOVER = '#3a3d43'
 SEL = '#264f78'
+SEL_FG = '#ffffff'
+DROP_BG = '#385a48'
+
+
+def apply_theme(name):
+    from .themes import palette, PALETTES
+    selected = name if name in PALETTES else 'dark'
+    globals().update(palette(selected))
+    return selected
 
 # Tree helpers
 TRASH = '.quietpet_trash'

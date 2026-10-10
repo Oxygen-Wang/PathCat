@@ -18,9 +18,15 @@ from .native.win32 import force_top
 class QuietPet:
     def __init__(self):
         self.settings = config.load_settings()
+        from .core.themes import initialize_settings
+        initialize_settings(self.settings)
+        self.settings['theme'] = config.apply_theme(self.settings.get('theme', 'dark'))
+        self.settings['font_size'] = config.apply_font_size(self.settings.get('font_size', 10))
+        config.save_settings(self.settings)
         i18n.set_language(self.settings.get('language') or 'zh')
         self.root = tk.Tk()
         self.root.report_callback_exception = self._log_exception
+        self._apply_named_fonts()
 
         self.pet = Pet(self.root, self.settings)
         self.pet.on_click = self.toggle_panel
@@ -31,6 +37,10 @@ class QuietPet:
         self.pet.on_drop = self.on_cat_drop
 
         self.explorer = Explorer(self.root, self.settings, self.pet_pos, self.save)
+        from .ui.tutorial import Tutorial, should_show
+        self.tutorial = Tutorial(self.root, self.settings, self.save)
+        if should_show(self.settings):
+            self.root.after_idle(self.tutorial.start)
         self.control = ControlServer(self._control, config.CONTROL_PORT)
 
         self.hotkey_text = (self.settings.get('hotkey') or config.DEFAULT_HOTKEY).strip()
@@ -128,13 +138,34 @@ class QuietPet:
         self._tick('control', 60, self.pump_control)
 
     def _control(self, cmd, args):
+        from .integrations import codex
         ex = self.explorer
+        if cmd == 'theme':
+            name = args.get('name')
+            from .core.themes import PALETTES
+            if name not in PALETTES:
+                raise ValueError('Unknown theme')
+            self.set_theme(name)
+            return {'ok': True, 'result': {'theme': name}}
+        if cmd in ('file_view', 'file_ignore', 'file_transfer'):
+            from .integrations.file_panel import handle
+            return {'ok': True, 'result': handle(ex, cmd, args)}
+        if cmd == 'codex_status':
+            return {'ok': True, 'result': codex.report_status(
+                args.get('kind'), args.get('session_id'), args.get('ttl', 300))}
         if cmd in (None, 'info'):
             return {'ok': True, 'result': {
                 'folder': str(ex.folder), 'roots': list(ex.roots),
                 'side': self.settings.get('panel_side', 'right'),
                 'width': ex.panel_width(), 'visible': self._panel_visible(),
-                'status': self.pet.status_kind, 'version': config.VERSION}}
+                'status': self.pet.status_kind, 'version': config.VERSION,
+                'integration': codex.snapshot(), 'theme': self.settings.get('theme', 'dark'),
+                'hotkey': self.hotkey_text, 'hotkey_registered': self.hotkey_ok,
+                'font_size': config.FONT_SIZE,
+                'tutorial': {'visible': self.tutorial.window is not None,
+                             'step': self.tutorial.step + 1,
+                             'complete': bool(self.settings.get('tutorial_complete')),
+                             'test_mode': config.TUTORIAL_TEST_MODE}}}
         if cmd == 'open_folder':
             p = Path(args.get('path') or '')
             if p.is_dir():
@@ -229,6 +260,18 @@ class QuietPet:
             lang.add_command(label=i18n.t('lang_' + code),
                              command=lambda c=code: self.set_language(c))
         menu.add_cascade(label=i18n.t('pet_language'), menu=lang)
+        colors = tk.Menu(menu, tearoff=0)
+        from .core.themes import PALETTES
+        for name in PALETTES:
+            label = ('✓ ' if self.settings.get('theme') == name else '') + i18n.t('theme_' + name)
+            colors.add_command(label=label, command=lambda value=name: self.set_theme(value))
+        menu.add_cascade(label=i18n.t('pet_theme'), menu=colors)
+        sizes = tk.Menu(menu, tearoff=0)
+        for size in (8, 10, 12, 14, 16, 18, 20):
+            sizes.add_command(label=('✓ ' if config.FONT_SIZE == size else '') + str(size),
+                              command=lambda value=size: self.set_font_size(value))
+        menu.add_cascade(label=i18n.t('pet_font_size'), menu=sizes)
+        menu.add_command(label=i18n.t('pet_tutorial'), command=self.tutorial.start)
         menu.add_separator()
         menu.add_command(label=i18n.t('pet_quit'), command=self.quit)
         menu.tk_popup(ev.x_root, ev.y_root)
@@ -239,10 +282,32 @@ class QuietPet:
         self.save()
         self.pet.status_label = i18n.t('status_' + self.pet.status_kind)
         self.pet.draw_status()
-        if self.explorer.panel and self.explorer.panel.winfo_exists():
-            self.explorer.panel.destroy()
-            self.explorer.panel = None
-            self.explorer.show()
+        self.explorer.recreate()
+        if self.tutorial.window is not None:
+            self.tutorial.render()
+
+    def set_theme(self, name):
+        self.settings['theme'] = config.apply_theme(name)
+        self.save()
+        self.pet.draw_status()
+        self.explorer.recreate()
+        if self.tutorial.window is not None:
+            self.tutorial.render()
+
+    def _apply_named_fonts(self):
+        from tkinter import font
+        for name in ('TkDefaultFont', 'TkTextFont', 'TkMenuFont', 'TkHeadingFont',
+                     'TkCaptionFont', 'TkSmallCaptionFont', 'TkIconFont', 'TkTooltipFont',
+                     'TkFixedFont'):
+            font.nametofont(name, root=self.root).configure(size=config.FONT_SIZE)
+
+    def set_font_size(self, size):
+        self.settings['font_size'] = config.apply_font_size(size)
+        self._apply_named_fonts()
+        self.save()
+        self.explorer.recreate()
+        if self.tutorial.window is not None:
+            self.tutorial.render()
 
     # --- hotkey ------------------------------------------------------------
     def start_hotkey(self):
@@ -292,6 +357,7 @@ class QuietPet:
         self._tick('periodic', 8000, self.periodic)
 
     def quit(self):
+        self.tutorial.close()
         self.settings.update(x=self.root.winfo_x(), y=self.root.winfo_y())
         self.save()
         if self.hotkey_manager:

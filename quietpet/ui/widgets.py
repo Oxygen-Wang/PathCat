@@ -17,6 +17,7 @@ class ToolTip:
         widget.bind('<Enter>', self._schedule, add='+')
         widget.bind('<Leave>', self._hide, add='+')
         widget.bind('<ButtonPress>', self._hide, add='+')
+        widget.bind('<Destroy>', self._hide, add='+')
 
     def set_text(self, text):
         self.text = text
@@ -47,8 +48,8 @@ class ToolTip:
             tip.attributes('-topmost', True)
         except tk.TclError:
             pass
-        tk.Label(tip, text=self.text, bg='#2b2d31', fg='#e6e8eb',
-                 font=('Segoe UI', 9), padx=7, pady=3, bd=0).pack()
+        tk.Label(tip, text=self.text, bg=config.BTN, fg=config.FG,
+                 font=config.ui_font(9), padx=7, pady=3, bd=0).pack()
         tip.geometry(f'+{x}+{y}')
         self._tip = tip
 

@@ -154,24 +154,22 @@ class Pet:
         c.create_text(32 + ox, 65 + oy, text='●', fill='#878d9a', font=('Segoe UI', 8), tags='cat')
 
     def draw_status(self):
-        c = self.canvas
-        c.delete('status')
-        color = config.STATUS_STYLES.get(self.status_kind, config.STATUS_STYLES['off'])[0]
-        label = t('status_' + self.status_kind)
-        c.create_rectangle(5, 4, 75, 24, fill='#23252b', outline='#3a3d43', tags='status')
-        c.create_oval(11, 10, 19, 18, fill=color, outline='', tags='status')
-        c.create_text(24, 14, text=label, anchor='w', fill='#d7dae0', font=('Segoe UI', 8), tags='status')
+        # Head space is reserved for onboarding. Task state stays in animation
+        # and the file panel, without a permanent conversation/status bubble.
+        self.canvas.delete('status')
 
     # --- status ------------------------------------------------------------
     def refresh_status(self):
-        result = read_opencode_status()
+        from ..integrations.codex import read_status
+        result = read_status() or read_opencode_status()
         if result is None:
             return
         kind = result[0]
         self.status_kind = kind
         self.status_label = t('status_' + kind)
         self.draw_status()
-        self.base_state = kind if kind in BASE_STATES else 'idle'
+        self.base_state = {'busy': 'working', 'wait': 'waiting', 'off': 'offline',
+                           'idle': 'idle'}.get(kind, 'idle')
         if self.state in BASE_STATES:
             self.set_state(self.base_state)
 

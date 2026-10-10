@@ -1,0 +1,171 @@
+<!doctype html>
+<html lang="zh-CN">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>QuietPet · 项目文件</title>
+<style>
+:root {color-scheme:light dark;font-family:system-ui,"Microsoft YaHei",sans-serif;--bg:#fff;--fg:#202124;--muted:#687078;--line:#e3e6e8;--soft:#f4f6f7;--accent:#326749}
+@media(prefers-color-scheme:dark){:root{--bg:#202224;--fg:#e4e7e9;--muted:#9aa3aa;--line:#3b4044;--soft:#292d30;--accent:#94c9a5}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font-size:13px}main{padding:16px;max-width:1000px;margin:auto}header{display:flex;justify-content:space-between;align-items:center;gap:10px}h1{font-size:18px;margin:0}small,.muted{color:var(--muted)}button{font:inherit;background:var(--soft);color:var(--fg);border:1px solid var(--line);border-radius:6px;padding:6px 9px;cursor:pointer}button:hover{border-color:var(--accent)}button:disabled{opacity:.45;cursor:default}.toolbar{display:flex;flex-wrap:wrap;gap:6px;margin:14px 0 10px;align-items:center}.path{font-size:12px;overflow-wrap:anywhere;padding:9px;background:var(--soft);border-radius:6px}.list{min-height:160px;max-height:440px;overflow:auto;margin-top:8px;border-top:1px solid var(--line)}.row{display:flex;gap:8px;align-items:center;padding:8px 4px;border-bottom:1px solid var(--line)}.row.selected{background:var(--soft)}.row.drop,.path.drop{outline:2px solid var(--accent);outline-offset:-2px}.name{border:0;background:transparent;flex:1;text-align:left;overflow-wrap:anywhere;padding:4px;font-size:13px}.type{font-size:11px;color:var(--muted);width:34px;flex-shrink:0}.row.ignored{opacity:.6}#status{min-height:20px;margin:10px 0;color:var(--muted);white-space:pre-wrap}#status.error{color:#bc4545}textarea{width:100%;min-height:130px;background:var(--soft);color:var(--fg);border:1px solid var(--line);padding:10px;resize:vertical;font:12px/1.7 ui-monospace,monospace}#editor,#preview{margin-top:12px;border-top:1px solid var(--line);padding-top:12px}h2{font-size:14px;margin:0 0 8px}pre{white-space:pre-wrap;overflow-wrap:anywhere;max-height:280px;overflow:auto;font-size:12px;line-height:1.6}footer{font-size:11px;color:var(--muted);line-height:1.6;border-top:1px solid var(--line);padding-top:10px;margin-top:12px}[hidden]{display:none!important}
+</style>
+<main>
+  <header><h1>项目文件</h1><small>QuietPet</small></header>
+  <div class="toolbar">
+    <button id="up" disabled>上一级</button><button id="refresh" disabled>刷新</button>
+    <button id="rules" disabled>忽略规则</button>
+    <select id="theme" aria-label="界面配色" disabled><option value="dark">黑色</option><option value="light">白色</option><option value="cream">暖米色</option><option value="sage">柔和绿</option><option value="slate">灰蓝色</option></select>
+    <label><input id="show" type="checkbox" disabled>显示忽略项</label>
+  </div>
+  <div id="path" class="path">正在连接项目…</div>
+  <div id="list" class="list" aria-label="项目文件"></div>
+  <div id="status" role="status">正在检查插件界面支持…</div>
+  <section id="editor" hidden>
+    <h2>项目忽略文件</h2>
+    <label>编辑文件 <select id="ignore-file" aria-label="忽略文件"><option>.cursorignore</option><option>.gitignore</option></select></label>
+    <p class="muted">自动读取 .gitignore 和 .cursorignore。每行一条，支持 ! 例外和 **。保存会修改所选项目文件；.gitignore 同时影响 Git。</p>
+    <textarea id="patterns" aria-label="忽略规则"></textarea>
+    <div class="toolbar"><button id="save">保存规则</button><button id="cancel">收起</button></div>
+  </section>
+  <section id="preview" hidden><h2 id="preview-title"></h2><pre id="preview-text"></pre></section>
+  <footer>拖到文件夹或当前路径可移动文件，按住 Ctrl 拖放可复制。忽略只影响显示。<br>此界面的拖放用于项目内部；从系统导入或向其他软件拖出真实文件，请使用 QuietPet 桌面面板。</footer>
+</main>
+<script>
+(() => {
+  const $ = id => document.getElementById(id);
+  let seq = 0, state = null, busy = false, ready = false, selected = null, editorRoot = null;
+  const pending = new Map();
+  function status(message, error = false) { $('status').textContent = message; $('status').classList.toggle('error', error); }
+  function rpc(method, params) {
+    return new Promise((resolve, reject) => {
+      const id = ++seq;
+      const timer = setTimeout(() => { pending.delete(id); reject(new Error('宿主未回应插件界面。可改用 QuietPet 桌面面板。')); }, 8000);
+      pending.set(id, {resolve, reject, timer});
+      window.parent.postMessage({jsonrpc:'2.0',id,method,params}, '*');
+    });
+  }
+  function accept(result) {
+    const data = result?.structuredContent;
+    if (data && Array.isArray(data.entries) && typeof data.root === 'string') {
+      state = data; selected = null; render();
+    }
+  }
+  window.addEventListener('message', event => {
+    if (event.source !== window.parent || event.data?.jsonrpc !== '2.0') return;
+    const message = event.data;
+    if (pending.has(message.id)) {
+      const request = pending.get(message.id); clearTimeout(request.timer); pending.delete(message.id);
+      if (message.error) request.reject(new Error(message.error.message || '宿主调用失败'));
+      else request.resolve(message.result);
+    } else if (message.method === 'ui/notifications/tool-result') accept(message.params);
+  });
+  async function call(name, args) {
+    if (!ready) throw new Error('插件界面尚未连接');
+    const result = await rpc('tools/call', {name, arguments:args});
+    if (result?.isError) throw new Error(result.content?.find(x => x.type === 'text')?.text || '操作失败');
+    return result;
+  }
+  async function action(callback) {
+    if (busy) return;
+    busy = true; render(); status('正在处理…');
+    try { await callback(); status('已更新'); }
+    catch (error) { status(error.message || String(error), true); }
+    finally { busy = false; render(); }
+  }
+  function listingArgs(path = state?.path) { return { ...(path ? {path} : {}), show_ignored:$('show').checked }; }
+  async function load(path) { accept(await call('quietpet_file_panel', listingArgs(path))); }
+  function bindDrop(element, target) {
+    element.addEventListener('dragover', event => {
+      if (busy || !event.dataTransfer.types.includes('application/x-quietpet-path')) return;
+      event.preventDefault(); event.dataTransfer.dropEffect = event.ctrlKey ? 'copy' : 'move'; element.classList.add('drop');
+    });
+    element.addEventListener('dragleave', () => element.classList.remove('drop'));
+    element.addEventListener('drop', event => {
+      event.preventDefault(); event.stopPropagation(); element.classList.remove('drop');
+      const source = event.dataTransfer.getData('application/x-quietpet-path');
+      if (!source) { status('系统文件拖放请使用 QuietPet 桌面面板。', true); return; }
+      const destination = typeof target === 'function' ? target() : target;
+      if (!destination) { status('没有可用的目标目录。', true); return; }
+      action(async () => accept(await call('quietpet_file_transfer',
+        {...listingArgs(),source,destination,mode:event.ctrlKey ? 'copy' : 'move'})));
+    });
+  }
+  function render() {
+    ['refresh','rules','show','theme'].forEach(id => $(id).disabled = busy || !state);
+    $('up').disabled = busy || !state?.parent;
+    $('save').disabled = busy;
+    if (!state) return;
+    $('theme').value = state.theme || 'dark';
+    const colors = state.palette;
+    if (colors) for (const [css,key] of Object.entries({'--bg':'BG','--fg':'FG','--muted':'MUTED','--soft':'BTN','--line':'BTN_HOVER','--accent':'FG'})) {
+      if (/^#[0-9a-f]{6}$/i.test(colors[key])) document.documentElement.style.setProperty(css,colors[key]);
+    }
+    $('path').textContent = state.path;
+    $('list').replaceChildren();
+    for (const item of state.entries) {
+      const row = document.createElement('div'); row.className = 'row'; row.classList.toggle('ignored', item.ignored);
+      row.classList.toggle('selected', selected === item.path); row.draggable = !busy && !item.link;
+      row.dataset.path = item.path;
+      const type = document.createElement('span'); type.className = 'type'; type.textContent = item.dir ? '目录' : '文件';
+      const name = document.createElement('button'); name.className = 'name'; name.textContent = item.name;
+      name.disabled = busy; name.title = item.path;
+      name.addEventListener('click', () => action(async () => {
+        if (item.dir) { $('preview').hidden = true; await load(item.path); }
+        else {
+          const result = await call('quietpet_read_file', {path:item.path,max_chars:12000});
+          $('preview-title').textContent = item.name;
+          $('preview-text').textContent = result.content?.filter(x => x.type === 'text').map(x => x.text).join('\n') || '';
+          $('preview').hidden = false;
+        }
+      }));
+      const hide = document.createElement('button'); hide.textContent = '忽略'; hide.disabled = busy;
+      hide.title = '将此路径追加到项目 .cursorignore';
+      hide.addEventListener('click', () => action(async () => {
+        const relative = item.path.slice(state.root.length).replaceAll('\\','/').replace(/^\//,'');
+        const escaped = relative.replace(/[\[\]*?]/g, match => '\\' + match);
+        const patterns = [...state.patterns,'/' + escaped + (item.dir ? '/' : '')];
+        accept(await call('quietpet_file_ignore', {...listingArgs(),root:state.root,patterns}));
+      }));
+      row.append(type,name,hide);
+      row.addEventListener('dragstart', event => {
+        selected = item.path;
+        event.dataTransfer.setData('application/x-quietpet-path', item.path);
+        event.dataTransfer.setData('text/plain', item.path); event.dataTransfer.effectAllowed = 'copyMove';
+      });
+      if (item.dir && !item.link) bindDrop(row, item.path);
+      $('list').append(row);
+    }
+    if (!state.entries.length) {
+      const note = document.createElement('p'); note.className = 'muted'; note.textContent = '当前目录没有可显示的文件。'; $('list').append(note);
+    }
+  }
+  bindDrop($('path'), () => state?.path);
+  bindDrop($('up'), () => state?.parent);
+  $('refresh').onclick = () => action(() => load());
+  $('theme').onchange = event => {
+    const name = event.target.value;
+    action(async () => { await call('quietpet_theme', {name}); await load(); });
+  };
+  $('up').onclick = () => action(() => load(state.parent));
+  $('show').onchange = () => action(() => load());
+  const loadRules = () => { $('patterns').value = (state.ignore_files?.[$('ignore-file').value] || []).join('\n'); };
+  $('rules').onclick = () => { editorRoot = state.root; loadRules(); $('editor').hidden = false; };
+  $('ignore-file').onchange = loadRules;
+  $('cancel').onclick = () => { $('editor').hidden = true; };
+  $('save').onclick = () => action(async () => {
+    const patterns = $('patterns').value === '' ? [] : $('patterns').value.split('\n');
+    accept(await call('quietpet_file_ignore', {...listingArgs(),root:editorRoot,
+      ignore_file:$('ignore-file').value,patterns})); $('editor').hidden = true;
+  });
+  async function initialize() {
+    try {
+      if (window.parent === window) throw new Error('请从插件工具打开此面板，直接打开 HTML 无法连接本机项目。');
+      await rpc('ui/initialize', {appInfo:{name:'quietpet-files',version:'0.2.0'},appCapabilities:{},protocolVersion:'2026-01-26'});
+      window.parent.postMessage({jsonrpc:'2.0',method:'ui/notifications/initialized',params:{}}, '*');
+      ready = true;
+      await action(() => load());
+    } catch (error) { status(error.message, true); }
+  }
+  initialize();
+})();
+</script>
+</html>

@@ -10,6 +10,10 @@ import sys
 
 
 def main():
+    if '--version' in sys.argv:
+        from quietpet.core.config import APP, VERSION
+        print(f'{APP} {VERSION}')
+        return
     if '--mcp' in sys.argv:
         from quietpet.mcp import main as mcp_main
         mcp_main()

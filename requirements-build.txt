@@ -1,0 +1,2 @@
+# Build tooling only. The desktop runtime uses the standard library and vendored pathspec.
+PyInstaller==6.18.0

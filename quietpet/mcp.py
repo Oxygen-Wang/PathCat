@@ -158,7 +158,7 @@ def _respond(rid, result=None, error=None):
     sys.stdout.flush()
 
 
-def main():
+def main(resource_list=None, resource_handler=None, tool_handler=None):
     try:
         sys.stdout.reconfigure(encoding='utf-8', newline='\n')
         sys.stdin.reconfigure(encoding='utf-8')
@@ -177,7 +177,7 @@ def main():
         if method == 'initialize':
             params = msg.get('params') or {}
             _respond(rid, {'protocolVersion': params.get('protocolVersion', PROTOCOL),
-                           'capabilities': {'tools': {}},
+                           'capabilities': dict({'tools': {}}, **({'resources': {}} if resource_list else {})),
                            'serverInfo': SERVER_INFO})
         elif method in ('notifications/initialized', 'initialized'):
             pass
@@ -185,11 +185,19 @@ def main():
             _respond(rid, {})
         elif method == 'tools/list':
             _respond(rid, {'tools': TOOLS})
+        elif method == 'resources/list' and resource_list is not None:
+            _respond(rid, {'resources': resource_list})
+        elif method == 'resources/read' and resource_handler is not None:
+            try:
+                _respond(rid, resource_handler((msg.get('params') or {}).get('uri')))
+            except Exception as exc:
+                _respond(rid, error={'code': -32602, 'message': str(exc)})
         elif method == 'tools/call':
             params = msg.get('params') or {}
             try:
-                text = call_tool(params.get('name'), params.get('arguments') or {})
-                _respond(rid, {'content': [{'type': 'text', 'text': text}], 'isError': False})
+                output = (tool_handler or call_tool)(params.get('name'), params.get('arguments') or {})
+                _respond(rid, output if isinstance(output, dict) else
+                         {'content': [{'type': 'text', 'text': output}], 'isError': False})
             except Exception as exc:
                 _respond(rid, {'content': [{'type': 'text', 'text': 'error: %s' % exc}], 'isError': True})
         elif rid is not None:
