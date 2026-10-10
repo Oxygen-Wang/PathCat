@@ -14,8 +14,8 @@ from .icons import load_icons
 from ..opencode.status import list_open_skills, read_mcp_servers, read_skill_text
 from ..core.util import safe_name, unique_dest
 from .widgets import ToolTip
-from ..native.win32 import (force_top, install_drop_targets, register_drop_target,
-                            start_ole_drag)
+from ..native.win32 import (force_top, get_cursor_pos, install_drop_targets,
+                            left_button_down, register_drop_target, start_ole_drag)
 
 CAT_W = 80          # cat window width
 CAT_GAP = 6
@@ -51,6 +51,7 @@ class Explorer:
         self._press = None
         self._press_iid = None
         self._drag_started = False
+        self._watch_after = None
         self._chip_ref = None
         self._chip_press_xy = None
         self._chip_started = False
@@ -938,13 +939,31 @@ class Explorer:
         self._press = (ev.x_root, ev.y_root)
         self._press_iid = iid
         self._drag_started = False
+        # Start a native drag either on motion (below) or when the pointer
+        # leaves the panel (polling), so fast drag-outs work too.
+        if self.selected_paths() or self.refs.get(iid):
+            try:
+                self._watch_after = self.tree.after(15, self._watch_external_drag)
+            except tk.TclError:
+                self._watch_after = None
 
     def drag_motion(self, ev):
         if self._drag_started or not self._press:
             return
         if abs(ev.x_root - self._press[0]) + abs(ev.y_root - self._press[1]) < 8:
             return
+        self._begin_drag()
+
+    def _begin_drag(self):
+        if self._drag_started or not self._press:
+            return
         self._drag_started = True
+        if self._watch_after:
+            try:
+                self.tree.after_cancel(self._watch_after)
+            except tk.TclError:
+                pass
+            self._watch_after = None
         for widget in (self.tree, self.panel):
             try:
                 widget.grab_release()
@@ -954,8 +973,35 @@ class Explorer:
         if items:
             start_ole_drag(paths=[str(p) for p in items])
             return
+        ref = self.refs.get(getattr(self, '_press_iid', None))
+        if ref and ref.get('text'):
+            self.copy_text(ref['text'])
+            start_ole_drag(text=ref['text'])
+
+    def _watch_external_drag(self):
+        self._watch_after = None
+        if self._drag_started or not self._press:
+            return
+        if not left_button_down():
+            return
+        x, y = get_cursor_pos()
+        px, py = self.panel.winfo_rootx(), self.panel.winfo_rooty()
+        pw, ph = self.panel.winfo_width(), self.panel.winfo_height()
+        if not (px <= x <= px + pw and py <= y <= py + ph):
+            self._begin_drag()
+            return
+        try:
+            self._watch_after = self.tree.after(15, self._watch_external_drag)
+        except tk.TclError:
+            self._watch_after = None
 
     def drag_end(self, ev):
+        if self._watch_after:
+            try:
+                self.tree.after_cancel(self._watch_after)
+            except tk.TclError:
+                pass
+            self._watch_after = None
         if not self._drag_started:
             ref = self.refs.get(getattr(self, '_press_iid', None))
             if ref and ref['kind'] == 'mcp':

@@ -459,9 +459,8 @@ if IS_WIN:
                 return
             src = _make_drop_source()
             effect = wintypes.DWORD(DROPEFFECT_COPY)
-            allowed = DROPEFFECT_COPY | DROPEFFECT_MOVE
             hr = _ole32.DoDragDrop(ptr, ctypes.cast(ctypes.byref(src), ctypes.c_void_p),
-                                   allowed, ctypes.byref(effect))
+                                   DROPEFFECT_COPY, ctypes.byref(effect))
             last_drag_effect = (hr, effect.value)
             if releaser:
                 releaser()
@@ -548,13 +547,13 @@ if IS_WIN:
     def _t_enter(this, pdata, keystate, pt, peffect):
         global _target_point
         _target_point = (pt[0].x, pt[0].y)
-        peffect[0] = DROPEFFECT_COPY | DROPEFFECT_MOVE
+        peffect[0] = DROPEFFECT_COPY
         return S_OK
 
     def _t_over(this, pdata, keystate, pt, peffect):
         global _target_point
         _target_point = (pt[0].x, pt[0].y)
-        peffect[0] = DROPEFFECT_COPY if (keystate & MK_CONTROL) else DROPEFFECT_MOVE
+        peffect[0] = DROPEFFECT_COPY
         return S_OK
 
     def _t_leave(this):
